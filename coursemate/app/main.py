@@ -268,6 +268,7 @@ def grade(question_id: int, req: GradeRequest):
             reference_answer=question.answer,
             user_answer=req.user_answer,
             context=context,
+            options=question.options or [],
         )
         attempt = save_attempt(
             session,
