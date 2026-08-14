@@ -117,7 +117,8 @@ docker compose up -d
 uv run python scripts/seed_demo.py
 ```
 
-内置演示资料为 `data/demo/操作系统-进程与调度.md`，导入后即可直接体验问答与刷题。
+内置演示资料位于 `data/demo/`，覆盖操作系统、数据库、Java、英语四个课程
+（文件名格式「课程名-主题.md」，导入时自动归入对应课程），导入后即可直接体验问答与刷题。
 
 ## 项目结构
 
