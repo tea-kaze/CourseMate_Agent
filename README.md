@@ -132,13 +132,17 @@ uv run python scripts/seed_demo.py
 │   ├── app/               # FastAPI 层：路由、文档入库服务、请求模型
 │   ├── db/                # SQLAlchemy 模型、会话、仓库函数（含课程问答会话/消息）
 │   ├── rag/               # 文档加载/切分、Embedding、Milvus 向量库
+│   ├── evaluation.py      # RAG 检索/忠实度评估逻辑
 │   └── web/               # Streamlit 前端（4 个页面）
 ├── docs/                  # 设计文档（含课程问答会话管理设计）
 ├── scripts/
 │   ├── seed_demo.py       # 导入演示资料
-│   └── demo_e2e.py        # 端到端功能验证脚本
+│   ├── demo_e2e.py        # 端到端功能验证脚本
+│   ├── eval_rag.py        # RAG 检索/忠实度评估
+│   └── cleanup_orphans.py # 清理孤儿文档与空课程
 ├── data/
 │   ├── demo/              # 演示资料
+│   ├── eval/              # RAG 评估 golden set
 │   ├── uploads/           # 上传的文档原文
 │   └── coursemate.db      # SQLite 业务数据（自动生成）
 ├── tests/                 # 单元测试
@@ -151,7 +155,7 @@ uv run python scripts/seed_demo.py
 
 | 方法 | 路径 | 说明 |
 | ---- | ---- | ---- |
-| GET | `/courses` | 课程列表 |
+| GET | `/courses` | 课程列表（仅有文档的课程） |
 | POST | `/courses` | 创建课程 |
 | GET | `/documents` | 文档列表 |
 | POST | `/documents` | 上传文档入库（multipart：file + course_name） |
@@ -190,7 +194,7 @@ uv run python scripts/eval_rag.py
 uv run python scripts/eval_rag.py --faithfulness
 ```
 
-- **golden set**：`data/eval/golden_set.json`，16 条标注问题覆盖四门演示课程；
+- **golden set**：`data/eval/golden_set.json`，26 条标注问题覆盖四门演示课程；
 - **指标**：关键词覆盖率、文档命中率（确定性）、答案忠实度（LLM-as-judge）；
 - **前置**：先 `uv run python scripts/seed_demo.py` 入库演示资料。
 

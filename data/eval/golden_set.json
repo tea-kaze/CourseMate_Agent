@@ -96,6 +96,86 @@
     "reference": "基本类型与包装类之间的自动转换，例如 Integer n = 42。"
   },
   {
+    "id": "java-5",
+    "course": "Java",
+    "question": "创建线程有哪几种方式？",
+    "expected_document": "Java-面向对象与核心基础.md",
+    "expected_keywords": ["继承 Thread", "实现 Runnable", "Callable", "FutureTask"],
+    "reference": "继承 Thread 类重写 run；实现 Runnable 接口（推荐）；实现 Callable 接口配合 FutureTask 获取返回值。"
+  },
+  {
+    "id": "java-6",
+    "course": "Java",
+    "question": "synchronized 和 volatile 有什么区别？",
+    "expected_document": "Java-面向对象与核心基础.md",
+    "expected_keywords": ["synchronized", "volatile", "原子性", "可见性"],
+    "reference": "synchronized 保证原子性和可见性，用于同步；volatile 只保证可见性并禁止指令重排，不保证原子性，适合一写多读。"
+  },
+  {
+    "id": "java-7",
+    "course": "Java",
+    "question": "ThreadPoolExecutor 有哪些核心参数？",
+    "expected_document": "Java-面向对象与核心基础.md",
+    "expected_keywords": ["corePoolSize", "maximumPoolSize", "keepAliveTime", "workQueue"],
+    "reference": "corePoolSize（核心线程数）、maximumPoolSize（最大线程数）、keepAliveTime（空闲存活时间）、workQueue（工作队列）、handler（拒绝策略）。"
+  },
+  {
+    "id": "java-8",
+    "course": "Java",
+    "question": "JVM 运行时数据区包括哪些部分？",
+    "expected_document": "Java-面向对象与核心基础.md",
+    "expected_keywords": ["程序计数器", "虚拟机栈", "本地方法栈", "方法区"],
+    "reference": "程序计数器、虚拟机栈、本地方法栈、堆、方法区（元空间）。"
+  },
+  {
+    "id": "java-9",
+    "course": "Java",
+    "question": "垃圾回收有哪些常见算法？",
+    "expected_document": "Java-面向对象与核心基础.md",
+    "expected_keywords": ["标记-清除", "复制", "标记-整理", "碎片"],
+    "reference": "标记-清除、复制、标记-整理。"
+  },
+  {
+    "id": "java-10",
+    "course": "Java",
+    "question": "Java 反射涉及哪些核心类？",
+    "expected_document": "Java-面向对象与核心基础.md",
+    "expected_keywords": ["Class.forName", "getConstructor", "getMethod", "getDeclaredField"],
+    "reference": "Class、Field、Method、Constructor。"
+  },
+  {
+    "id": "java-11",
+    "course": "Java",
+    "question": "JDK 动态代理和 CGLIB 有什么区别？",
+    "expected_document": "Java-面向对象与核心基础.md",
+    "expected_keywords": ["动态代理", "JDK", "CGLIB", "InvocationHandler"],
+    "reference": "JDK 动态代理基于接口（Proxy + InvocationHandler），CGLIB 基于继承生成子类代理。"
+  },
+  {
+    "id": "java-12",
+    "course": "Java",
+    "question": "Stream API 有哪些常用操作？",
+    "expected_document": "Java-面向对象与核心基础.md",
+    "expected_keywords": ["Stream", "filter", "reduce", "collect"],
+    "reference": "filter、map、sorted、distinct、reduce、collect 等，分中间操作与终止操作。"
+  },
+  {
+    "id": "java-13",
+    "course": "Java",
+    "question": "序列化中 transient 关键字的作用是什么？",
+    "expected_document": "Java-面向对象与核心基础.md",
+    "expected_keywords": ["Serializable", "transient", "serialVersionUID", "序列化"],
+    "reference": "transient 修饰的字段不参与序列化。"
+  },
+  {
+    "id": "java-14",
+    "course": "Java",
+    "question": "单例模式有哪些实现方式？",
+    "expected_document": "Java-面向对象与核心基础.md",
+    "expected_keywords": ["饿汉", "懒汉", "双重检查锁", "静态内部类"],
+    "reference": "饿汉式、懒汉式、双重检查锁、静态内部类、枚举。"
+  },
+  {
     "id": "en-1",
     "course": "英语",
     "question": "现在完成时和一般过去时有什么区别？",
