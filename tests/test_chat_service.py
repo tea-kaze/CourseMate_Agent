@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from langchain_core.messages import AIMessageChunk
+
 from coursemate.app import chat_service
 from coursemate.db import chat_repo
 
 
 def _agent(answer: str = "答案是A"):
     class FakeAgent:
-        def invoke(self, state):
+        def invoke(self, state, config=None):
             msgs = state["messages"]
             msgs.append(type("M", (), {"role": "assistant", "content": answer})())
             return {"messages": msgs}
@@ -38,7 +40,7 @@ def test_run_chat_appends_to_existing_session_and_ignores_history(fresh_db):
     chat_repo.add_chat_message(fresh_db, s.id, "assistant", "旧回答")
 
     class FakeAgent:
-        def invoke(self, state):
+        def invoke(self, state, config=None):
             msgs = state["messages"]
             contents = [m["content"] for m in msgs if isinstance(m, dict)]
             assert "旧问题" in contents
@@ -71,7 +73,7 @@ def test_run_chat_compresses_long_history_and_persists_summary(fresh_db):
             return type("R", (), {"content": "压缩摘要"})()
 
     class FakeAgent:
-        def invoke(self, state):
+        def invoke(self, state, config=None):
             msgs = state["messages"]
             contents = [m["content"] for m in msgs if isinstance(m, dict)]
             assert any("压缩摘要" in c for c in contents)
@@ -104,3 +106,94 @@ def test_run_chat_raises_when_session_missing(fresh_db):
     except chat_service.SessionNotFound:
         return
     raise AssertionError("会话不存在时应抛出 SessionNotFound")
+
+
+def _stream_agent(chunks):
+    """构造按给定 chunk 列表逐条产出消息的假 Agent（stream 模式）。"""
+
+    class FakeAgent:
+        def stream(self, state, stream_mode=None, config=None):
+            for c in chunks:
+                yield (c, {})
+
+    return FakeAgent()
+
+
+def test_run_chat_stream_yields_tokens_and_saves_messages(fresh_db):
+    events = list(
+        chat_service.run_chat_stream(
+            fresh_db,
+            message="什么是进程调度？",
+            course_id=2,
+            session_id=None,
+            history=[],
+            agent=_stream_agent(
+                [AIMessageChunk(content="你好"), AIMessageChunk(content="，同学")]
+            ),
+        )
+    )
+    fresh_db.commit()
+
+    types = [e["type"] for e in events]
+    assert types == ["meta", "token", "token"]
+    tokens = "".join(e["content"] for e in events if e["type"] == "token")
+    assert tokens == "你好，同学"
+
+    sid = events[0]["session_id"]
+    msgs = chat_repo.list_chat_messages(fresh_db, sid)
+    assert [m.role for m in msgs] == ["user", "assistant"]
+    assert msgs[1].content == "你好，同学"
+
+
+def test_run_chat_stream_skips_tool_call_chunks(fresh_db):
+    events = list(
+        chat_service.run_chat_stream(
+            fresh_db,
+            message="hi",
+            course_id=None,
+            session_id=None,
+            history=[],
+            agent=_stream_agent(
+                [
+                    AIMessageChunk(content=""),  # 思考阶段，无正文
+                    AIMessageChunk(
+                        content="被跳过的正文",
+                        tool_calls=[{"name": "search", "args": {}, "id": "1"}],
+                    ),  # 工具调用块，正文不应流出
+                    AIMessageChunk(content="最终回答"),
+                ]
+            ),
+        )
+    )
+    fresh_db.commit()
+
+    tokens = "".join(e["content"] for e in events if e["type"] == "token")
+    assert tokens == "最终回答"
+
+
+def test_run_chat_stream_error_does_not_save(fresh_db):
+    class BoomAgent:
+        def stream(self, state, stream_mode=None, config=None):
+            yield (AIMessageChunk(content="前半"), {})
+            raise RuntimeError("boom")
+
+    events = list(
+        chat_service.run_chat_stream(
+            fresh_db,
+            message="hi",
+            course_id=None,
+            session_id=None,
+            history=[],
+            agent=BoomAgent(),
+        )
+    )
+    fresh_db.commit()
+
+    types = [e["type"] for e in events]
+    assert "token" in types
+    assert types[-1] == "error"
+    assert "boom" in events[-1]["message"]
+
+    sid = events[0]["session_id"]
+    # 流中途失败：不落库任何消息
+    assert chat_repo.list_chat_messages(fresh_db, sid) == []

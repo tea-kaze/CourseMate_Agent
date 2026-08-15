@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 
 from dotenv import load_dotenv
@@ -49,6 +50,12 @@ class Settings(BaseSettings):
     CHAT_HISTORY_CHAR_BUDGET: int = 6000
     CHAT_KEEP_RECENT_MESSAGES: int = 10
 
+    # ---- 可观测性（LangSmith，可选）----
+    LANGSMITH_API_KEY: str = ""
+    LANGSMITH_TRACING: bool = False
+    LANGSMITH_PROJECT: str = "coursemate"
+    LANGSMITH_ENDPOINT: str = "https://api.smith.langchain.com"
+
     @property
     def is_postgres(self) -> bool:
         return self.DATABASE_URL.startswith("postgresql")
@@ -56,4 +63,21 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    settings = Settings()
+    _apply_langsmith_env(settings)
+    return settings
+
+
+def _apply_langsmith_env(settings: Settings) -> None:
+    """把 LangSmith 配置写入环境变量，供 LangChain 的自动 tracer 读取。
+
+    LangChain/LangGraph 的 tracing 依赖 LANGSMITH_* 环境变量，且是调用时惰性读取；
+    这里在首次加载配置时同步，保证后续 Agent 调用能带上 trace。
+    默认关闭（LANGSMITH_TRACING=False），避免把对话数据发到外部服务。
+    """
+    if settings.LANGSMITH_API_KEY and settings.LANGSMITH_TRACING:
+        os.environ["LANGSMITH_TRACING"] = "true"
+        os.environ["LANGSMITH_API_KEY"] = settings.LANGSMITH_API_KEY
+        os.environ["LANGSMITH_PROJECT"] = settings.LANGSMITH_PROJECT
+        if settings.LANGSMITH_ENDPOINT:
+            os.environ["LANGSMITH_ENDPOINT"] = settings.LANGSMITH_ENDPOINT

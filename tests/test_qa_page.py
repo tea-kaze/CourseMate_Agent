@@ -67,20 +67,16 @@ def page(monkeypatch: pytest.MonkeyPatch):
     def fake_delete(session_id):
         calls["delete"].append(session_id)
 
-    def fake_chat(message, course_id=None, history=None, session_id=None):
+    def fake_chat_stream(message, course_id=None, history=None, session_id=None):
         calls["chat"].append((message, course_id, session_id))
-        return {
-            "answer": "新回答",
-            "session_id": session_id,
-            "session_title": "什么是进程调度？",
-        }
+        yield "新回答"
 
     monkeypatch.setattr(api_client, "get_courses", fake_courses)
     monkeypatch.setattr(api_client, "list_chat_sessions", fake_list_sessions)
     monkeypatch.setattr(api_client, "list_chat_messages", fake_list_messages)
     monkeypatch.setattr(api_client, "create_chat_session", fake_create)
     monkeypatch.setattr(api_client, "delete_chat_session", fake_delete)
-    monkeypatch.setattr(api_client, "chat", fake_chat)
+    monkeypatch.setattr(api_client, "chat_stream", fake_chat_stream)
 
     at = AppTest.from_file(str(QA_PAGE), default_timeout=10)
     at.run()

@@ -1,0 +1,130 @@
+[
+  {
+    "id": "os-1",
+    "course": "操作系统",
+    "question": "进程和程序有什么区别？",
+    "expected_document": "操作系统-进程与调度.md",
+    "expected_keywords": ["静态", "动态", "生命周期", "资源分配"],
+    "reference": "程序是静态的指令集合；进程是程序的一次动态执行过程，具有生命周期，是操作系统进行资源分配和调度的基本单位。"
+  },
+  {
+    "id": "os-2",
+    "course": "操作系统",
+    "question": "进程有哪三种基本状态？",
+    "expected_document": "操作系统-进程与调度.md",
+    "expected_keywords": ["就绪", "运行", "阻塞"],
+    "reference": "就绪态、运行态、阻塞态。"
+  },
+  {
+    "id": "os-3",
+    "course": "操作系统",
+    "question": "什么是时间片轮转调度算法？",
+    "expected_document": "操作系统-进程与调度.md",
+    "expected_keywords": ["时间片", "轮转", "就绪队列", "分时系统"],
+    "reference": "每个进程获得固定时间片，时间片用完回到就绪队列尾部，适合分时系统。"
+  },
+  {
+    "id": "os-4",
+    "course": "操作系统",
+    "question": "死锁产生的四个必要条件是什么？",
+    "expected_document": "操作系统-进程与调度.md",
+    "expected_keywords": ["互斥", "占有并等待", "不可剥夺", "循环等待"],
+    "reference": "互斥、占有并等待、不可剥夺、循环等待。"
+  },
+  {
+    "id": "db-1",
+    "course": "数据库",
+    "question": "关系模型有哪三类完整性约束？",
+    "expected_document": "数据库-基础与SQL.md",
+    "expected_keywords": ["实体完整性", "参照完整性", "用户定义完整性"],
+    "reference": "实体完整性、参照完整性、用户定义完整性。"
+  },
+  {
+    "id": "db-2",
+    "course": "数据库",
+    "question": "事务的 ACID 特性分别指什么？",
+    "expected_document": "数据库-基础与SQL.md",
+    "expected_keywords": ["原子性", "一致性", "隔离性", "持久性"],
+    "reference": "原子性、一致性、隔离性、持久性。"
+  },
+  {
+    "id": "db-3",
+    "course": "数据库",
+    "question": "SQL 标准定义了哪四个隔离级别？",
+    "expected_document": "数据库-基础与SQL.md",
+    "expected_keywords": ["读未提交", "读已提交", "可重复读", "串行化"],
+    "reference": "读未提交、读已提交、可重复读、串行化。"
+  },
+  {
+    "id": "db-4",
+    "course": "数据库",
+    "question": "建立索引有哪些优点和缺点？",
+    "expected_document": "数据库-基础与SQL.md",
+    "expected_keywords": ["加速查询", "存储空间", "写入变慢"],
+    "reference": "优点：加速查询、支持唯一约束；缺点：占用额外存储空间、增删改时写入变慢。"
+  },
+  {
+    "id": "java-1",
+    "course": "Java",
+    "question": "Java 面向对象的三大特性是什么？",
+    "expected_document": "Java-面向对象与核心基础.md",
+    "expected_keywords": ["封装", "继承", "多态"],
+    "reference": "封装、继承、多态。"
+  },
+  {
+    "id": "java-2",
+    "course": "Java",
+    "question": "ArrayList 和 LinkedList 有什么区别？",
+    "expected_document": "Java-面向对象与核心基础.md",
+    "expected_keywords": ["动态数组", "双向链表", "随机访问"],
+    "reference": "ArrayList 基于动态数组，随机访问快、中间增删慢；LinkedList 基于双向链表，两端增删快、随机访问慢。"
+  },
+  {
+    "id": "java-3",
+    "course": "Java",
+    "question": "方法重载和方法重写有什么区别？",
+    "expected_document": "Java-面向对象与核心基础.md",
+    "expected_keywords": ["重载", "重写", "参数列表", "方法签名"],
+    "reference": "重载是同一类中方法名相同、参数列表不同；重写是子类覆盖父类方法，要求方法签名一致。"
+  },
+  {
+    "id": "java-4",
+    "course": "Java",
+    "question": "什么是自动装箱和拆箱？",
+    "expected_document": "Java-面向对象与核心基础.md",
+    "expected_keywords": ["装箱", "拆箱", "包装类", "基本类型"],
+    "reference": "基本类型与包装类之间的自动转换，例如 Integer n = 42。"
+  },
+  {
+    "id": "en-1",
+    "course": "英语",
+    "question": "现在完成时和一般过去时有什么区别？",
+    "expected_document": "英语-核心语法与高频词汇.md",
+    "expected_keywords": ["现在完成", "一般过去", "无关"],
+    "reference": "一般过去时只陈述过去、与现在无关；现在完成时强调与现在的联系。"
+  },
+  {
+    "id": "en-2",
+    "course": "英语",
+    "question": "被动语态的基本结构是什么？",
+    "expected_document": "英语-核心语法与高频词汇.md",
+    "expected_keywords": ["过去分词", "被动语态", "承受者"],
+    "reference": "be + 过去分词，动作的承受者作主语。"
+  },
+  {
+    "id": "en-3",
+    "course": "英语",
+    "question": "定语从句中只能用 that 的常见情况有哪些？",
+    "expected_document": "英语-核心语法与高频词汇.md",
+    "expected_keywords": ["序数词", "最高级", "不定代词"],
+    "reference": "先行词被序数词或最高级修饰、先行词是不定代词、先行词既有人又有物。"
+  },
+  {
+    "id": "en-4",
+    "course": "英语",
+    "question": "非谓语动词包括哪几类？",
+    "expected_document": "英语-核心语法与高频词汇.md",
+    "expected_keywords": ["不定式", "动名词", "分词"],
+    "reference": "不定式、动名词、分词。"
+  }
+]

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from langchain_core.messages import AIMessageChunk
+from loguru import logger
 from sqlalchemy.orm import Session
 
 from coursemate.agent import context
@@ -59,7 +61,16 @@ def run_chat(
         from coursemate.agent.agent import build_agent
 
         agent = build_agent()
-    result = agent.invoke({"messages": agent_messages})
+    result = agent.invoke(
+        {"messages": agent_messages},
+        config={
+            "metadata": {
+                "flow": "chat",
+                "session_id": chat_session.id,
+                "course_id": course_id,
+            }
+        },
+    )
     messages = result.get("messages", [])
     answer = messages[-1].content if messages else ""
 
@@ -73,3 +84,96 @@ def run_chat(
         "session_id": chat_session.id,
         "session_title": chat_session.title,
     }
+
+
+def run_chat_stream(
+    db: Session,
+    *,
+    message: str,
+    course_id: int | None = None,
+    session_id: int | None = None,
+    history: list[dict] | None = None,
+    agent: Any | None = None,
+    llm: Any | None = None,
+):
+    """流式问答：逐 token 产出事件，流结束后统一落库。
+
+    与 run_chat 的差异：Agent 用 stream_mode="messages" 逐 token 输出，
+    只对外流式返回最终回答（跳过工具调用块与思考 token——二者 content 为空
+    或带 tool_calls）；用户消息、助手完整回答、摘要仍在流结束后写入数据库。
+
+    产出事件（生成器）：
+    - {"type": "meta", "session_id": int}  —— 首条，携带会话 ID
+    - {"type": "token", "content": str}    —— 回答 token
+    - {"type": "error", "message": str}    —— 流中途失败（此时不落库）
+    """
+    if session_id is None:
+        chat_session = chat_repo.create_chat_session(db, course_id=course_id)
+    else:
+        chat_session = chat_repo.get_chat_session(db, session_id)
+        if chat_session is None:
+            raise SessionNotFound("会话不存在")
+    db.flush()
+
+    if session_id is None and history:
+        history_msgs = [
+            {"role": role, "content": content}
+            for role, content in history
+            if role in {"user", "assistant"} and content
+        ]
+    else:
+        history_msgs = [
+            {"role": m.role, "content": m.content}
+            for m in chat_repo.list_chat_messages(db, chat_session.id)
+        ]
+    ctx_msgs, new_summary = context.build_chat_context(
+        history_msgs, chat_session.summary, llm=llm
+    )
+
+    raw_message = message
+    if course_id:
+        message = f"[课程范围：{course_id}] {message}"
+    agent_messages = list(ctx_msgs)
+    agent_messages.append({"role": "user", "content": message})
+
+    if agent is None:
+        from coursemate.agent.agent import build_agent
+
+        agent = build_agent()
+
+    yield {"type": "meta", "session_id": chat_session.id}
+
+    answer_parts: list[str] = []
+    try:
+        for chunk in agent.stream(
+            {"messages": agent_messages},
+            config={
+                "metadata": {
+                    "flow": "chat_stream",
+                    "session_id": chat_session.id,
+                    "course_id": course_id,
+                }
+            },
+            stream_mode="messages",
+        ):
+            msg, _meta = chunk
+            content = msg.content
+            if (
+                isinstance(msg, AIMessageChunk)
+                and isinstance(content, str)
+                and content
+                and not msg.tool_calls
+            ):
+                answer_parts.append(content)
+                yield {"type": "token", "content": content}
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("流式问答失败")
+        yield {"type": "error", "message": str(exc)}
+        return
+
+    answer = "".join(answer_parts)
+    chat_repo.add_chat_message(db, chat_session.id, "user", raw_message)
+    chat_repo.add_chat_message(db, chat_session.id, "assistant", answer)
+    if new_summary != chat_session.summary:
+        chat_repo.update_chat_session_summary(db, chat_session.id, new_summary)
+    db.flush()

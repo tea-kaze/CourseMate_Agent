@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 
 import httpx
@@ -68,6 +69,46 @@ def chat(
     if resp.status_code >= 400:
         raise RuntimeError(resp.json().get("detail", resp.text))
     return resp.json()
+
+
+def chat_stream(
+    message: str,
+    course_id: int | None = None,
+    history: list[dict] | None = None,
+    session_id: int | None = None,
+):
+    """流式对话：逐 token 产出回答文本（生成器）。
+
+    后端返回 SSE；此处解析 data 事件，遇 error 抛异常，meta/done 忽略。
+    页面在流结束后 rerun，从 API 重读完整消息。
+    """
+    with httpx.Client(
+        base_url=api_base(), timeout=httpx.Timeout(300.0, connect=10.0)
+    ) as client:
+        with client.stream(
+            "POST",
+            "/chat/stream",
+            json={
+                "message": message,
+                "course_id": course_id,
+                "history": history or [],
+                "session_id": session_id,
+            },
+        ) as resp:
+            if resp.status_code >= 400:
+                raise RuntimeError(resp.json().get("detail", resp.text))
+            for line in resp.iter_lines():
+                if not line or not line.startswith("data:"):
+                    continue
+                payload = line[len("data:"):].strip()
+                if not payload:
+                    continue
+                event = json.loads(payload)
+                etype = event.get("type")
+                if etype == "token":
+                    yield event.get("content", "")
+                elif etype == "error":
+                    raise RuntimeError(event.get("message", "流式问答失败"))
 
 
 def list_chat_sessions() -> list[dict]:

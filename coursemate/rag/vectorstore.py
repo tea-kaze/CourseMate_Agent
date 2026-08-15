@@ -58,14 +58,18 @@ def get_vectorstore(collection_name: str | None = None) -> Milvus:
 
 
 def delete_by_document(vectorstore: Milvus, document_id: int) -> None:
-    """按 document_id 删除该文档对应的全部向量。"""
+    """按 document_id 删除该文档对应的全部向量。
+
+    document_id 是开启动态字段后的顶层字段，过滤表达式直接写字段名
+    （与 course_id 一致），而不是 metadata["document_id"]——后者不报错但匹配不到。
+    """
+    expr = f"document_id == {document_id}"
     try:
-        expr = f'metadata["document_id"] == {document_id}'
         vectorstore.col.delete(expr)
     except Exception:
-        # Milvus Lite/部分版本表达式写法不同，回退全量扫描删除
+        # 部分环境表达式写法不同，回退按 pk 全量扫描删除
         results = vectorstore.col.query(
-            filter=f'metadata["document_id"] == {document_id}',
+            filter=expr,
             output_fields=["pk"],
         )
         pks = [r["pk"] for r in results]

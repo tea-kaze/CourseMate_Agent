@@ -3,7 +3,7 @@ from __future__ import annotations
 import streamlit as st
 
 from coursemate.web.api_client import (
-    chat,
+    chat_stream,
     create_chat_session,
     delete_chat_session,
     get_courses,
@@ -67,13 +67,11 @@ if prompt:
     with st.chat_message("user"):
         st.markdown(prompt)
     with st.chat_message("assistant"):
-        with st.spinner("Agent 检索资料并思考中..."):
-            try:
-                result = chat(
-                    prompt, course_id=course_id, session_id=session_id
-                )
-                st.markdown(result["answer"])
-                # 重新从 API 读取完整消息，保证与会话一致
-                st.rerun()
-            except Exception as exc:  # noqa: BLE001
-                st.error(f"问答失败：{exc}")
+        try:
+            st.write_stream(
+                chat_stream(prompt, course_id=course_id, session_id=session_id)
+            )
+            # 重新从 API 读取完整消息，保证与会话一致
+            st.rerun()
+        except Exception as exc:  # noqa: BLE001
+            st.error(f"问答失败：{exc}")

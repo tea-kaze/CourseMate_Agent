@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from coursemate.agent.service import get_service
 from coursemate.app.ingestion import IngestionError, delete_document_file, ingest_file
-from coursemate.app.chat_service import SessionNotFound, run_chat
+from coursemate.app.chat_service import SessionNotFound, run_chat, run_chat_stream
 from coursemate.app.schemas import (
     ChatMessageOut,
     ChatRequest,
@@ -170,6 +172,43 @@ def chat(req: ChatRequest):
     except Exception as exc:  # noqa: BLE001
         logger.exception("chat 调用失败")
         raise HTTPException(status_code=500, detail=f"对话失败：{exc}") from exc
+
+
+@app.post("/chat/stream")
+def chat_stream(req: ChatRequest):
+    """Agent 流式对话接口（SSE）：逐 token 返回回答，流结束后落库。
+
+    事件格式（text/event-stream，每个 data 事件一个 JSON）：
+    - {"type": "meta", "session_id": int}  —— 会话 ID（首条）
+    - {"type": "token", "content": str}    —— 回答 token
+    - {"type": "error", "message": str}    —— 流中途失败
+    - {"type": "done"}                     —— 正常结束
+    """
+    if req.session_id is not None:
+        with get_session() as session:
+            if chat_repo.get_chat_session(session, req.session_id) is None:
+                raise HTTPException(status_code=404, detail="会话不存在")
+
+    def event_stream():
+        with get_session() as session:
+            errored = False
+            for event in run_chat_stream(
+                session,
+                message=req.message,
+                course_id=req.course_id,
+                session_id=req.session_id,
+                history=req.history,
+            ):
+                if event.get("type") == "error":
+                    errored = True
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            if errored:
+                session.rollback()
+            else:
+                session.commit()
+                yield 'data: {"type": "done"}\n\n'
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 def _chat_session_out(row: dict) -> ChatSessionOut:

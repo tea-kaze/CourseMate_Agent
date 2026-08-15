@@ -20,8 +20,8 @@ flowchart LR
 
 1. **资料管理**：上传 PDF / Markdown / TXT / Word（.docx），自动解析、切分、向量化入库；支持删除。
 2. **课程问答**：Agent 检索课程资料后回答，回答带来源引用；支持多会话管理
-   （新建/切换/删除，SQLite 持久化，重启后记录不丢）；长对话自动上下文压缩
-   （增量摘要 + 最近消息窗口），控制 token 成本并保持连贯；
+   （新建/切换/删除，SQLite 持久化，重启后记录不丢）；回答流式输出（SSE 逐 token）；
+   长对话自动上下文压缩（增量摘要 + 最近消息窗口），控制 token 成本并保持连贯；
    资料中没有的内容会明确说明，不编造。
 3. **刷题练习**：按课程、知识点、题型（单选/多选/简答/混合）自动生成题目，在线作答并批改。
 4. **错题本**：历史作答记录、正确率、按题型与知识点的错误分布；近期错题支持按题型、知识点筛选。
@@ -35,6 +35,7 @@ flowchart LR
 - **后端**：FastAPI（REST API，Swagger 文档）
 - **前端**：Streamlit（四页面）
 - **存储**：Milvus（向量）+ SQLite（默认业务数据）/ PostgreSQL（可选）
+- **可观测性**：LangSmith（可选，设置密钥即自动 trace Agent 每次调用）
 
 架构示意：
 
@@ -80,6 +81,7 @@ cp .env.example .env
 # 编辑 .env，填入：
 # DEEPSEEK_API_KEY   从 https://platform.deepseek.com 获取
 # SILICONFLOW_API_KEY 从 https://cloud.siliconflow.cn 获取
+# （可选）LANGSMITH_API_KEY + LANGSMITH_TRACING=true，开启 LangSmith 可观测性
 ```
 
 ### 4. 启动（二选一）
@@ -155,6 +157,7 @@ uv run python scripts/seed_demo.py
 | POST | `/documents` | 上传文档入库（multipart：file + course_name） |
 | DELETE | `/documents/{id}` | 删除文档（含向量） |
 | POST | `/chat` | Agent 对话（支持多轮 history 与 session_id；长对话自动上下文压缩） |
+| POST | `/chat/stream` | Agent 流式对话（SSE 逐 token 返回） |
 | GET | `/chat/sessions` | 会话列表（按最后活动时间倒序） |
 | POST | `/chat/sessions` | 新建会话（可绑定课程范围） |
 | GET | `/chat/sessions/{id}/messages` | 读取某会话的全部消息 |
@@ -174,6 +177,22 @@ uv run pytest -q
 作答的仓库逻辑、错题统计与题型/知识点筛选、会话与消息持久化、上下文压缩
 （增量摘要/失败降级）、出题与批改的 Schema 校验，以及问答/刷题/错题本页面的
 Streamlit AppTest 交互测试。
+
+## RAG 评估
+
+评估脚本独立于主流程，可随时对当前入库的资料跑分：
+
+```bash
+# 检索评估（确定性，无需 LLM）：关键词覆盖率 + 文档命中率
+uv run python scripts/eval_rag.py
+
+# 附加答案忠实度评估（LLM-as-judge，较慢）
+uv run python scripts/eval_rag.py --faithfulness
+```
+
+- **golden set**：`data/eval/golden_set.json`，16 条标注问题覆盖四门演示课程；
+- **指标**：关键词覆盖率、文档命中率（确定性）、答案忠实度（LLM-as-judge）；
+- **前置**：先 `uv run python scripts/seed_demo.py` 入库演示资料。
 
 ## 技术选型理由
 
