@@ -83,3 +83,79 @@ def test_mistake_stats_wrong_attempts_include_options(fresh_db):
     stats = repo.mistake_stats(fresh_db, course.id)
     wrong = stats["wrong_attempts"][0]
     assert wrong["options"] == ["A. FCFS", "B. SJF", "C. 时间片轮转"]
+
+
+def test_mistake_stats_filter_wrong_attempts_by_qtype_and_topic(fresh_db):
+    """qtype/topic 只过滤近期错题明细（50 条上限之前），聚合统计保持全量。"""
+    course = repo.get_or_create_course(fresh_db, "错题筛选")
+    q_single = repo.save_questions(
+        fresh_db,
+        course.id,
+        [
+            {
+                "qtype": "single",
+                "topic": "进程调度",
+                "stem": "时间片轮转属于哪种调度方式？",
+                "options": ["A. 抢占式", "B. 非抢占式"],
+                "answer": "A. 抢占式",
+                "explanation": "",
+            }
+        ],
+    )[0]
+    q_multi = repo.save_questions(
+        fresh_db,
+        course.id,
+        [
+            {
+                "qtype": "multiple",
+                "topic": "进程调度",
+                "stem": "以下哪些属于进程调度算法？",
+                "options": ["A. FCFS", "B. SJF"],
+                "answer": "A. FCFS、B. SJF",
+                "explanation": "",
+            }
+        ],
+    )[0]
+    q_short = repo.save_questions(
+        fresh_db,
+        course.id,
+        [
+            {
+                "qtype": "short",
+                "topic": "死锁",
+                "stem": "什么是死锁？",
+                "answer": "……",
+                "explanation": "",
+            }
+        ],
+    )[0]
+    q_no_topic = repo.save_questions(
+        fresh_db,
+        course.id,
+        [{"qtype": "short", "stem": "无知识点题目", "answer": "略", "explanation": ""}],
+    )[0]
+    repo.save_attempt(fresh_db, q_single, "B. 非抢占式", 0, False, "答错")
+    repo.save_attempt(fresh_db, q_multi, "A. FCFS", 0, False, "答错")
+    repo.save_attempt(fresh_db, q_short, "对", 90, True, "答对")
+    repo.save_attempt(fresh_db, q_no_topic, "错", 0, False, "答错")
+
+    all_stats = repo.mistake_stats(fresh_db, course.id)
+    assert all_stats["total_attempts"] == 4
+    assert len(all_stats["wrong_attempts"]) == 3
+
+    by_type = repo.mistake_stats(fresh_db, course.id, qtype="single")
+    assert [w["qtype"] for w in by_type["wrong_attempts"]] == ["single"]
+    assert by_type["total_attempts"] == 4  # 聚合不受筛选影响
+
+    by_topic = repo.mistake_stats(fresh_db, course.id, topic="进程调度")
+    assert {w["qtype"] for w in by_topic["wrong_attempts"]} == {"single", "multiple"}
+    assert by_topic["total_attempts"] == 4
+
+    combined = repo.mistake_stats(
+        fresh_db, course.id, qtype="multiple", topic="进程调度"
+    )
+    assert len(combined["wrong_attempts"]) == 1
+    assert combined["wrong_attempts"][0]["qtype"] == "multiple"
+
+    untagged = repo.mistake_stats(fresh_db, course.id, topic="未分类")
+    assert [w["stem"] for w in untagged["wrong_attempts"]] == ["无知识点题目"]

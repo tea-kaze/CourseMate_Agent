@@ -15,9 +15,41 @@ def test_load_txt_document(tmp_path: Path):
 
 
 def test_load_unsupported_type_raises(tmp_path: Path):
-    f = tmp_path / "data.docx"
+    f = tmp_path / "data.xlsx"
     f.write_bytes(b"not supported")
     with pytest.raises(DocumentParseError, match="不支持的文件类型"):
+        load_document(f)
+
+
+def test_load_docx_paragraph_and_table(tmp_path: Path):
+    """.docx 应提取段落文本与表格内容。"""
+    from docx import Document
+
+    f = tmp_path / "course.docx"
+    doc = Document()
+    doc.add_paragraph("第一章：进程与线程。进程是资源分配的基本单位。")
+    table = doc.add_table(rows=2, cols=2)
+    table.cell(0, 0).text = "调度算法"
+    table.cell(0, 1).text = "抢占式"
+    table.cell(1, 0).text = "FCFS"
+    table.cell(1, 1).text = "否"
+    doc.save(f)
+
+    docs = load_document(f)
+    content = "\n".join(d.page_content for d in docs)
+    assert "第一章：进程与线程" in content
+    assert "调度算法 | 抢占式" in content
+    assert "FCFS | 否" in content
+
+
+def test_load_empty_docx_raises(tmp_path: Path):
+    """空 .docx 应给出明确报错而不是崩溃。"""
+    from docx import Document
+
+    f = tmp_path / "empty.docx"
+    doc = Document()
+    doc.save(f)
+    with pytest.raises(DocumentParseError, match="未提取到文本"):
         load_document(f)
 
 

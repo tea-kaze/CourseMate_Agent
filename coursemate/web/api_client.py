@@ -130,8 +130,18 @@ def grade(question_id: int, user_answer: str) -> dict:
     return resp.json()
 
 
-def mistake_stats(course_id: int | None = None) -> dict:
-    params = {"course_id": course_id} if course_id else {}
+def mistake_stats(
+    course_id: int | None = None,
+    qtype: str | None = None,
+    topic: str | None = None,
+) -> dict:
+    params = {}
+    if course_id:
+        params["course_id"] = course_id
+    if qtype:
+        params["qtype"] = qtype
+    if topic:
+        params["topic"] = topic
     with _client() as client:
         resp = client.get("/stats/mistakes", params=params)
     if resp.status_code >= 400:

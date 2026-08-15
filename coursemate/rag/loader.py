@@ -11,7 +11,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from coursemate.config import get_settings
 
 
-SUPPORTED_TYPES = {".pdf", ".md", ".markdown", ".txt"}
+SUPPORTED_TYPES = {".pdf", ".md", ".markdown", ".txt", ".docx"}
 
 
 class DocumentParseError(Exception):
@@ -32,6 +32,40 @@ def _load_text(path: Path) -> list[LCDocument]:
     return loader.load()
 
 
+def _docx_text(element) -> str:
+    """提取元素内全部 w:t 文本节点（含超链接中的文字）。"""
+    from docx.oxml.ns import qn
+
+    return "".join(node.text or "" for node in element.iter(qn("w:t")))
+
+
+def _load_docx(path: Path) -> list[LCDocument]:
+    """按文档正文顺序提取段落与表格文本，图片等非文本内容忽略。"""
+    try:
+        from docx import Document
+        from docx.table import Table
+    except ImportError as exc:  # pragma: no cover
+        raise DocumentParseError("未安装 Word 解析依赖（python-docx）") from exc
+
+    doc = Document(str(path))
+    lines: list[str] = []
+    for child in doc.element.body.iterchildren():
+        if child.tag.endswith("}p"):
+            text = _docx_text(child).strip()
+            if text:
+                lines.append(text)
+        elif child.tag.endswith("}tbl"):
+            table = Table(child, doc)
+            for row in table.rows:
+                cells = [
+                    _docx_text(cell._tc).strip().replace("\n", " ")
+                    for cell in row.cells
+                ]
+                if any(cells):
+                    lines.append(" | ".join(cells))
+    return [LCDocument(page_content="\n".join(lines))]
+
+
 def load_document(path: Path) -> list[LCDocument]:
     """按扩展名加载文档，返回 LangChain Document 列表。
 
@@ -43,12 +77,14 @@ def load_document(path: Path) -> list[LCDocument]:
         raise DocumentParseError(f"不支持的文件类型：{suffix}")
     if suffix == ".pdf":
         docs = _load_pdf(path)
+    elif suffix == ".docx":
+        docs = _load_docx(path)
     else:
         docs = _load_text(path)
     text = "\n".join(d.page_content for d in docs).strip()
     if not text:
         raise DocumentParseError(
-            "文档未提取到文本内容（可能是扫描件 PDF），请上传带文本层的文件。"
+            "文档未提取到文本内容（可能是扫描件 PDF 或空文档），请上传带文本层的文件。"
         )
     return docs
 

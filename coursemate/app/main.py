@@ -290,9 +290,15 @@ def grade(question_id: int, req: GradeRequest):
 
 
 @app.get("/stats/mistakes")
-def stats(course_id: int | None = None):
+def stats(
+    course_id: int | None = None,
+    qtype: str | None = None,
+    topic: str | None = None,
+):
     with get_session() as session:
-        return mistake_stats(session, course_id=course_id)
+        return mistake_stats(
+            session, course_id=course_id, qtype=qtype, topic=topic
+        )
 
 
 def _get_course_or_404(session, course_id: int):

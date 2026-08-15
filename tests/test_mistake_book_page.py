@@ -30,6 +30,7 @@ STATS = {
     },
     "by_topic": {
         "进程调度": {"total": 2, "correct": 0},
+        "内存管理": {"total": 1, "correct": 1},
     },
     "wrong_attempts": [
         {
@@ -69,9 +70,16 @@ def page(monkeypatch: pytest.MonkeyPatch):
     def fake_courses():
         return COURSES
 
-    def fake_mistake_stats(course_id=None):
-        return STATS
+    def fake_mistake_stats(course_id=None, qtype=None, topic=None):
+        fake_mistake_stats.calls.append((course_id, qtype, topic))
+        wrong = STATS["wrong_attempts"]
+        if qtype:
+            wrong = [w for w in wrong if w["qtype"] == qtype]
+        if topic:
+            wrong = [w for w in wrong if w["topic"] == topic]
+        return {**STATS, "wrong_attempts": wrong}
 
+    fake_mistake_stats.calls = []
     monkeypatch.setattr(api_client, "get_courses", fake_courses)
     monkeypatch.setattr(api_client, "mistake_stats", fake_mistake_stats)
 
@@ -110,3 +118,30 @@ def test_wrong_book_marks_user_selection_on_multiple_choice(page):
     correct_marked = [t for t in md_texts if "正确答案" in t]
     assert any("A. FCFS" in t for t in correct_marked), "正确选项 A 未标识"
     assert any("**正确答案**：A. FCFS、B. SJF、C. 时间片轮转" in t for t in correct_marked)
+
+
+def test_filter_wrong_attempts_by_type(page):
+    """选择题型筛选后，近期错题只展示该题型，且请求携带 qtype 参数。"""
+    at = page
+    at.selectbox(key="mistake_type_filter").select("单选题").run()
+    md_texts = [m.value for m in at.markdown]
+    assert any("时间片轮转属于哪种调度方式" in t for t in md_texts)
+    assert not any("以下哪些属于进程调度算法" in t for t in md_texts)
+    assert (None, "single", None) in api_client.mistake_stats.calls
+
+
+def test_filter_wrong_attempts_by_topic(page):
+    """选择知识点筛选后，近期错题只展示该知识点，且请求携带 topic 参数。"""
+    at = page
+    at.selectbox(key="mistake_topic_filter").select("进程调度").run()
+    md_texts = [m.value for m in at.markdown]
+    assert any("以下哪些属于进程调度算法" in t for t in md_texts)
+    assert any("时间片轮转属于哪种调度方式" in t for t in md_texts)
+    assert (None, None, "进程调度") in api_client.mistake_stats.calls
+
+
+def test_filter_empty_result_shows_hint(page):
+    """筛选后无错题时显示空状态提示。"""
+    at = page
+    at.selectbox(key="mistake_topic_filter").select("内存管理").run()
+    assert any("该筛选条件下暂无错题" in i.value for i in at.info)

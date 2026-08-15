@@ -18,6 +18,16 @@ class IngestionError(Exception):
     pass
 
 
+def validate_suffix(filename: str) -> str:
+    """校验上传文件扩展名，返回小写后缀；不支持的类型给出明确错误。"""
+    suffix = Path(filename).suffix.lower()
+    if suffix == ".doc":
+        raise IngestionError("暂不支持旧版 .doc 文件，请先另存为 .docx 后上传。")
+    if suffix not in {".pdf", ".md", ".markdown", ".txt", ".docx"}:
+        raise IngestionError(f"不支持的文件类型：{suffix or '（无扩展名）'}")
+    return suffix
+
+
 def ingest_file(filename: str, content: bytes, course_name: str) -> dict:
     """入库单个文档，返回 {document_id, filename, chunk_count, course_id}。
 
@@ -30,9 +40,7 @@ def ingest_file(filename: str, content: bytes, course_name: str) -> dict:
     """
     init_db()
     settings = get_settings()
-    suffix = Path(filename).suffix.lower()
-    if suffix not in {".pdf", ".md", ".markdown", ".txt"}:
-        raise IngestionError(f"不支持的文件类型：{suffix or '（无扩展名）'}")
+    suffix = validate_suffix(filename)
 
     upload_dir = Path(settings.UPLOAD_DIR)
     upload_dir.mkdir(parents=True, exist_ok=True)

@@ -141,10 +141,17 @@ def save_attempt(
     return attempt
 
 
-def mistake_stats(session: Session, course_id: int | None = None) -> dict:
+def mistake_stats(
+    session: Session,
+    course_id: int | None = None,
+    qtype: str | None = None,
+    topic: str | None = None,
+) -> dict:
     """错题统计：总数、正确率、按题型/知识点分布 + 近期错题明细。
 
     这是错题本页面的数据源；course_id 为空时统计全部课程。
+    qtype/topic 只过滤近期错题明细（在 50 条上限之前生效），
+    顶部聚合统计保持全量，不随筛选变化。
     """
     q = select(AnswerAttempt).join(Question)
     if course_id is not None:
@@ -155,9 +162,9 @@ def mistake_stats(session: Session, course_id: int | None = None) -> dict:
     by_type: dict[str, dict] = {}
     by_topic: dict[str, dict] = {}
     for a in attempts:
-        qtype = a.question.qtype
-        topic = a.question.topic or "未分类"
-        for bucket, key in ((by_type, qtype), (by_topic, topic)):
+        attempt_qtype = a.question.qtype
+        attempt_topic = a.question.topic or "未分类"
+        for bucket, key in ((by_type, attempt_qtype), (by_topic, attempt_topic)):
             item = bucket.setdefault(key, {"total": 0, "correct": 0})
             item["total"] += 1
             if a.is_correct:
@@ -178,6 +185,8 @@ def mistake_stats(session: Session, course_id: int | None = None) -> dict:
         }
         for a in attempts
         if not a.is_correct
+        and (qtype is None or a.question.qtype == qtype)
+        and (topic is None or (a.question.topic or "未分类") == topic)
     ]
     wrong_attempts.sort(key=lambda x: x["created_at"], reverse=True)
     return {

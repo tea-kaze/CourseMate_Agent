@@ -11,8 +11,8 @@ st.title("📁 资料管理")
 with st.form("upload_form", clear_on_submit=True):
     course_name = st.text_input("课程名称", placeholder="例如：操作系统")
     files = st.file_uploader(
-        "上传课程资料（PDF / Markdown / TXT）",
-        type=["pdf", "md", "markdown", "txt"],
+        "上传课程资料（PDF / Markdown / TXT / Word）",
+        type=["pdf", "md", "markdown", "txt", "docx"],
         accept_multiple_files=True,
     )
     submitted = st.form_submit_button("开始入库", use_container_width=True)
