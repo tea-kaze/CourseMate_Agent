@@ -108,9 +108,9 @@ def health() -> dict:
 
 @app.get("/courses", response_model=list[CourseOut])
 def courses():
-    """课程列表：前端页面与 Agent 的课程索引都用它。"""
+    """课程列表：只返回有已入库文档的课程（空课程不展示，与资料管理保持一致）。"""
     with get_session() as session:
-        return [_to_course_out(c) for c in list_courses(session)]
+        return [_to_course_out(c) for c in list_courses(session) if c.documents]
 
 
 @app.post("/courses")

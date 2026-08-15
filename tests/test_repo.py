@@ -21,6 +21,17 @@ def test_document_crud(fresh_db):
     assert repo.list_documents(fresh_db) == []
 
 
+def test_get_course_index_excludes_empty_courses(fresh_db):
+    """空课程（无文档）不应出现在课程索引，避免课程范围下拉框出现空选项。"""
+    repo.get_or_create_course(fresh_db, "空课程")
+    course = repo.get_or_create_course(fresh_db, "有文档课程")
+    repo.create_document(fresh_db, course.id, "ch1.md", "/tmp/ch1.md", "md", 3)
+
+    index = repo.get_course_index(fresh_db)
+    names = [c["course_name"] for c in index]
+    assert names == ["有文档课程"]
+
+
 def test_question_and_attempt_flow(fresh_db):
     course = repo.get_or_create_course(fresh_db, "数据库原理")
     ids = repo.save_questions(

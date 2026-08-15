@@ -31,12 +31,15 @@ def get_course_index(session: Session) -> list[dict]:
 
     这是 get_course_index 工具的底层实现：模型先"看一眼"有哪些课程，
     再决定用哪个 course_id 检索，避免凭空猜测。
+    空课程（无文档）不返回，避免列出无法检索的课程。
     """
     result: list[dict] = []
     for course in list_courses(session):
         docs = session.scalars(
             select(Document).where(Document.course_id == course.id)
         ).all()
+        if not docs:
+            continue
         result.append(
             {
                 "course_id": course.id,
