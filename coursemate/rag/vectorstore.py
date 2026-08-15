@@ -61,17 +61,12 @@ def delete_by_document(vectorstore: Milvus, document_id: int) -> None:
     """按 document_id 删除该文档对应的全部向量。
 
     document_id 是开启动态字段后的顶层字段，过滤表达式直接写字段名
-    （与 course_id 一致），而不是 metadata["document_id"]——后者不报错但匹配不到。
+    （与 course_id 一致），而不是 metadata["document_id"]——后者匹配不到。
+    用包装器的 delete(expr=...)：langchain-milvus 0.4 / pymilvus 3 中
+    vectorstore.col 是 _MilvusClientCollection，没有 delete 方法，直接调会抛
+    AttributeError，导致向量静默残留（文档删了但还能被检索到）。
     """
-    expr = f"document_id == {document_id}"
-    try:
-        vectorstore.col.delete(expr)
-    except Exception:
-        # 部分环境表达式写法不同，回退按 pk 全量扫描删除
-        results = vectorstore.col.query(
-            filter=expr,
-            output_fields=["pk"],
-        )
-        pks = [r["pk"] for r in results]
-        if pks:
-            vectorstore.col.delete(f"pk in {pks}")
+    deleted = vectorstore.delete(expr=f"document_id == {document_id}")
+    if not deleted:
+        raise RuntimeError(f"未删除到向量：document_id == {document_id}")
+
