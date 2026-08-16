@@ -332,11 +332,10 @@ dependencies = [
     { name = "langgraph" },
     { name = "langgraph-prebuilt" },
     { name = "loguru" },
-    { name = "milvus-lite", marker = "sys_platform == 'win32'" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
     { name = "pydantic-settings" },
-    { name = "pymilvus", extra = ["milvus-lite"] },
+    { name = "pymilvus" },
     { name = "pypdf" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -364,11 +363,10 @@ requires-dist = [
     { name = "langgraph", specifier = ">=1.2.11" },
     { name = "langgraph-prebuilt", specifier = ">=1.1.0" },
     { name = "loguru", specifier = ">=0.7.3" },
-    { name = "milvus-lite", marker = "sys_platform == 'win32'", specifier = ">=2.4.0" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.4" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "pydantic-settings", specifier = ">=2.15.0" },
-    { name = "pymilvus", extras = ["milvus-lite"], specifier = ">=3.0.1" },
+    { name = "pymilvus", specifier = ">=3.0.1" },
     { name = "pypdf", specifier = ">=6.15.0" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "pytest-asyncio", specifier = ">=1.4.0" },
@@ -405,9 +403,6 @@ wheels = [
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/c8/3b/8878dbfc78a0084bbd408b34827a58b530be98132fcf620b7e15f9191614/faiss_cpu-1.15.0-cp310-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:ec9b29aae29e428c085c2d49dbb02e4673cdea75db418d420f9e60e0b4184498", size = 18764625, upload-time = "2026-08-03T17:49:43.676Z" },
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/db/2a/654116e6ee2808562a6b2a11c396bdb46d45689e3bf7206ee99400589cab/faiss_cpu-1.15.0-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:30da3029952f0de69f16ce31946fd63fc3e292c867749bbcd2c0a0f09fd06f65", size = 11413863, upload-time = "2026-08-03T17:49:46.471Z" },
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/9d/8c/0a0f09659c1972aa83b9820cd3dd7f68f6678cfcfebde542e1c23d7d8663/faiss_cpu-1.15.0-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:88fbe1acac6978869063cb2f9477f85718da596a6e0a17751618f9c756bce255", size = 19470092, upload-time = "2026-08-03T17:49:50.253Z" },
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/b2/76/021398ec5608314124b554bb025878a86f129bcf3576c293826352d9a783/faiss_cpu-1.15.0-cp312-cp312-win_amd64.whl", hash = "sha256:5b940897b317febaa761088513a3db164fad3ac71a5e1ed7be9a052c9bf1a447", size = 16251530, upload-time = "2026-08-03T17:50:00.166Z" },
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/96/74/4a70395a6e07036628a1bd0b3f709101a6aecfa6a746db13b6e7921cf291/faiss_cpu-1.15.0-cp313-cp313-win_amd64.whl", hash = "sha256:22dddb013e764aad66dac6cd15b49c7598d60339e0591b73b5e081629419c21b", size = 16251914, upload-time = "2026-08-03T17:50:03.293Z" },
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/ec/13/0a021b9df16963f839a3f325657656b70f23b5a6dbeb422eaa187d0121b3/faiss_cpu-1.15.0-cp314-cp314-win_amd64.whl", hash = "sha256:37170d5e9ead4b6bfd9c314afc39e17e92064068a0c5a4063dd3f39568c2667e", size = 16535739, upload-time = "2026-08-03T17:50:06.714Z" },
 ]
 
 [[package]]
@@ -2068,11 +2063,6 @@ dependencies = [
 sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/c0/78/6bd0dba340706bc63346af96f0ebe36ff17f75404f5de935fda94d476c98/pymilvus-3.0.1.tar.gz", hash = "sha256:c02389059088b18d6e598cd175541e445c772fab4926c5e527c4913be34887f1", size = 347593, upload-time = "2026-07-29T14:55:43.061Z" }
 wheels = [
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/60/9d/7011887b29f452905745e8bd321f404068d5bfe78fe84e42c0b7cd81a065/pymilvus-3.0.1-py3-none-any.whl", hash = "sha256:c5a8d5c1fa1de7b416e3529d383d8cc2e7da2170433ffa4a2d9087e14f70171a", size = 386820, upload-time = "2026-07-29T14:55:44.279Z" },
-]
-
-[package.optional-dependencies]
-milvus-lite = [
-    { name = "milvus-lite", marker = "sys_platform != 'win32'" },
 ]
 
 [[package]]

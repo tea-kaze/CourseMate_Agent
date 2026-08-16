@@ -16,7 +16,7 @@ from coursemate.db.repo import (
     get_or_create_course,
     update_document_status,
 )
-from coursemate.db.session import get_session, init_db
+from coursemate.db.session import get_session
 from coursemate.rag.loader import DocumentParseError, load_document, split_documents
 from coursemate.rag.vectorstore import delete_by_document, get_vectorstore
 
@@ -61,11 +61,10 @@ def ingest_file(filename: str, content: bytes, course_name: str) -> dict:
     完整流程：
     1. 校验扩展名并保存原文到 data/uploads（uuid 重命名避免冲突）；
     2. 加载并切分文档，失败（如扫描件 PDF）时清理文件并抛出明确错误；
-    3. 业务元数据写 SQLite/PostgreSQL，向量写 Milvus；
+    3. 业务元数据写 PostgreSQL，向量写 Milvus；
     4. 入库成功后在日志中打印 chunk 数量，便于验收。
     任一步失败都会清理已保存的原文，避免留下半成品数据。
     """
-    init_db()
     settings = get_settings()
     suffix = validate_suffix(filename)
 

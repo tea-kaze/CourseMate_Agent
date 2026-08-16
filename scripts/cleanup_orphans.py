@@ -1,6 +1,6 @@
 """清理孤儿数据：无向量的文档 + 空课程。
 
-- 孤儿文档：SQLite 有记录但 Milvus 无向量（曾指向不同 Milvus 实例或向量库被清空）。
+- 孤儿文档：PostgreSQL 有记录但 Milvus 无向量（曾指向不同实例或向量库被清空）。
 - 空课程：没有任何文档的课程（删除文档后残留）。删除空课程会级联删除其题目与作答记录，
   从而让「错题本」不再显示这些已删文档关联的题目。
 
@@ -38,10 +38,33 @@ from coursemate.db.session import get_session, init_db  # noqa: E402
 from coursemate.rag.vectorstore import _connection_args  # noqa: E402
 
 
+class UnsafeCleanupError(RuntimeError):
+    """Milvus 为空时拒绝默认执行破坏性清理。"""
+
+
+def validate_empty_milvus_cleanup(
+    *,
+    milvus_ids: set[int],
+    has_ready_documents: bool,
+    dry_run: bool,
+    allow_empty_milvus: bool,
+) -> None:
+    if (
+        not milvus_ids
+        and has_ready_documents
+        and not dry_run
+        and not allow_empty_milvus
+    ):
+        raise UnsafeCleanupError(
+            "Milvus 集合为空，但 PostgreSQL 中仍有 ready 文档；"
+            "请先确认连接和向量迁移，或显式传入 --allow-empty-milvus。"
+        )
+
+
 def _milvus_document_ids() -> set[int]:
     """返回 Milvus 中实际存在向量的 document_id 集合。"""
     settings = get_settings()
-    client = MilvusClient(_connection_args()["uri"])
+    client = MilvusClient(**_connection_args())
     if settings.MILVUS_COLLECTION not in client.list_collections():
         return set()
     iterator = client.query_iterator(
@@ -103,6 +126,11 @@ def main() -> None:
         default=24,
         help="pending/ingest_failed 超过多少小时后允许清理（默认 24）",
     )
+    parser.add_argument(
+        "--allow-empty-milvus",
+        action="store_true",
+        help="即使 Milvus 为空也执行实际清理（危险，仅在确认向量确实丢失时使用）",
+    )
     args = parser.parse_args()
 
     init_db()
@@ -113,6 +141,21 @@ def main() -> None:
 
     with get_session() as session:
         stale_before = utcnow() - timedelta(hours=max(args.stale_hours, 0))
+        all_documents = list_all_documents(session)
+        try:
+            validate_empty_milvus_cleanup(
+                milvus_ids=milvus_ids,
+                has_ready_documents=any(
+                    document.status == DocumentStatus.READY
+                    for document in all_documents
+                ),
+                dry_run=args.dry_run,
+                allow_empty_milvus=args.allow_empty_milvus,
+            )
+        except UnsafeCleanupError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise SystemExit(2) from exc
+
         orphan_docs = select_cleanup_documents(
             session,
             milvus_ids=milvus_ids,

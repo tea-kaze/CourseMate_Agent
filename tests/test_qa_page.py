@@ -88,6 +88,7 @@ def test_page_loads_most_recent_session_messages(page):
     md = [m.value for m in at.markdown]
     assert any("什么是进程调度？" in t for t in md)
     assert any("进程调度是……" in t for t in md)
+    assert at.chat_input[0].proto.max_chars == 4000
 
 
 def test_new_session_creates_and_switches(page):

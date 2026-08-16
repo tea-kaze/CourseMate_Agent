@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from loguru import logger
 
-from coursemate.agent.service import get_service
+from coursemate.agent.service import NoRelevantCourseMaterialError, get_service
 from coursemate.app.ingestion import (
     DocumentDeletionError,
     DocumentNotFoundError,
@@ -42,6 +42,7 @@ from coursemate.app.schemas import (
 )
 from coursemate.config import get_settings
 from coursemate.db import chat_repo
+from coursemate.db.models import utc_isoformat
 from coursemate.db.repo import (
     delete_document,
     get_document,
@@ -99,7 +100,7 @@ def _to_document_out(doc) -> DocumentOut:
         filename=doc.filename,
         doc_type=doc.doc_type,
         chunk_count=doc.chunk_count,
-        created_at=doc.created_at.isoformat(),
+        created_at=utc_isoformat(doc.created_at),
     )
 
 
@@ -146,7 +147,19 @@ async def upload_document(
     course_name: str = Form("默认课程"),
 ):
     """上传文档并入库（multipart 表单）。"""
-    content = await file.read()
+    max_upload_mb = get_settings().MAX_UPLOAD_MB
+    max_upload_bytes = max_upload_mb * 1024 * 1024
+    if file.size is not None and file.size > max_upload_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"上传文件不能超过 {max_upload_mb} MB",
+        )
+    content = await file.read(max_upload_bytes + 1)
+    if len(content) > max_upload_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"上传文件不能超过 {max_upload_mb} MB",
+        )
     try:
         result = ingest_file(file.filename or "unnamed", content, course_name)
     except IngestionError as exc:
@@ -254,7 +267,7 @@ def _chat_session_out(row: dict) -> ChatSessionOut:
 
 def _chat_message_out(m) -> ChatMessageOut:
     return ChatMessageOut(
-        id=m.id, role=m.role, content=m.content, created_at=m.created_at.isoformat()
+        id=m.id, role=m.role, content=m.content, created_at=utc_isoformat(m.created_at)
     )
 
 
@@ -279,8 +292,8 @@ def create_chat_session(req: CreateChatSessionRequest):
                 "title": s.title,
                 "course_id": s.course_id,
                 "message_count": 0,
-                "created_at": s.created_at.isoformat(),
-                "updated_at": s.updated_at.isoformat(),
+                "created_at": utc_isoformat(s.created_at),
+                "updated_at": utc_isoformat(s.updated_at),
             }
         )
 
@@ -322,6 +335,8 @@ def generate(req: GenerateQuestionsRequest):
             count=req.count,
             qtype=req.qtype,
         )
+    except NoRelevantCourseMaterialError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         logger.exception("出题失败")
         raise HTTPException(status_code=500, detail=f"出题失败：{exc}") from exc

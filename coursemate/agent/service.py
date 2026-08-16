@@ -6,10 +6,13 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Any
+from typing import Any, TypeVar
 
+from langchain_core.exceptions import OutputParserException
 from langchain_core.tools import tool
 from langchain_core.vectorstores import VectorStoreRetriever
+from loguru import logger
+from pydantic import BaseModel, ValidationError
 
 from coursemate.agent.llm import get_llm
 from coursemate.agent.schemas import GradeResult, QuestionSet
@@ -17,6 +20,48 @@ from coursemate.config import get_settings
 from coursemate.db.repo import get_course_index
 from coursemate.db.session import get_session
 from coursemate.rag.vectorstore import get_vectorstore
+
+
+StructuredModel = TypeVar("StructuredModel", bound=BaseModel)
+STRUCTURED_OUTPUT_ATTEMPTS = 2
+STRUCTURED_OUTPUT_RETRY_INSTRUCTION = (
+    "\n\n上一次输出未通过结构校验。请严格按照结构化输出 Schema 返回完整字段，"
+    "不要省略任何必填字段。"
+)
+
+
+class NoRelevantCourseMaterialError(Exception):
+    def __init__(self) -> None:
+        super().__init__("课程资料库为空或未检索到相关内容，请先上传相关资料后再出题。")
+
+
+def _invoke_structured(
+    runnable: Any,
+    prompt: str,
+    schema: type[StructuredModel],
+) -> StructuredModel:
+    """Invoke a structured runnable and retry one schema/parser failure."""
+    for attempt in range(1, STRUCTURED_OUTPUT_ATTEMPTS + 1):
+        try:
+            result = runnable.invoke(
+                prompt
+                if attempt == 1
+                else prompt + STRUCTURED_OUTPUT_RETRY_INSTRUCTION
+            )
+            if isinstance(result, schema):
+                return result
+            return schema.model_validate(result)
+        except (ValidationError, OutputParserException) as exc:
+            if attempt == STRUCTURED_OUTPUT_ATTEMPTS:
+                raise
+            logger.warning(
+                "结构化输出校验失败，准备重试 attempt={}/{} error_type={}",
+                attempt,
+                STRUCTURED_OUTPUT_ATTEMPTS,
+                type(exc).__name__,
+            )
+
+    raise RuntimeError("unreachable structured output state")
 
 
 def _format_docs(docs: list[Any]) -> str:
@@ -99,9 +144,12 @@ class CourseMateService:
         再让 LLM 以结构化输出（Pydantic Schema）生成题目，保证字段契约稳定。
         """
         course_name = self._course_name(course_id)
-        context = self.search_as_text(
+        docs = self.search(
             topic or course_name, course_id=course_id, top_k=max(count * 2, 5)
         )
+        if not docs:
+            raise NoRelevantCourseMaterialError()
+        context = _format_docs(docs)
         prompt = (
             f"课程：{course_name}\n"
             f"知识点/主题：{topic or '课程整体'}，要求题型：{qtype}\n"
@@ -109,8 +157,7 @@ class CourseMateService:
             "要求：题目必须严格依据资料内容，简答题给出参考答案与解析。"
         )
         llm = get_llm(temperature=0.4, thinking=False).with_structured_output(QuestionSet)
-        result = llm.invoke(prompt)  # type: ignore[union-attr]
-        return result
+        return _invoke_structured(llm, prompt, QuestionSet)
 
     # ---- 批改 ----
     def grade_answer(
@@ -140,8 +187,7 @@ class CourseMateService:
             "请据此逐项判断学生是否选择了该选项；简答题根据要点是否覆盖评分，给出具体错误原因。"
         )
         llm = get_llm(temperature=0.0, thinking=False).with_structured_output(GradeResult)
-        result = llm.invoke(prompt)  # type: ignore[union-attr]
-        return result
+        return _invoke_structured(llm, prompt, GradeResult)
 
     # ---- 索引 ----
     def course_index(self) -> list[dict]:
@@ -166,7 +212,7 @@ def build_tools(
     *,
     course_id: int | None = None,
 ) -> list[Any]:
-    """构建 Agent 绑定的 4 个工具。
+    """构建聊天 Agent 的只读检索工具。
 
     每个工具用 @tool 装饰器定义，带清晰的 description，
     模型才能正确决定何时调用哪个工具（这是 ReAct Agent 的关键）。
@@ -179,33 +225,11 @@ def build_tools(
         return svc.search_as_text(query, course_id=course_id)
 
     @tool
-    def generate_questions(
-        course_id: int, topic: str = "", count: int = 5, qtype: str = "mixed"
-    ) -> str:
-        """基于指定课程的资料生成练习题（single/multiple/short/mixed）。"""
-        result = svc.generate_questions(course_id, topic, count, qtype)
-        return result.model_dump_json(ensure_ascii=False)
-
-    @tool
-    def grade_answer(
-        question: str,
-        reference_answer: str,
-        user_answer: str,
-        context: str = "",
-        options: list[str] | None = None,
-    ) -> str:
-        """批改一道题的作答，返回对错、分数、反馈与知识点建议。"""
-        result = svc.grade_answer(
-            question, reference_answer, user_answer, context, options
-        )
-        return result.model_dump_json(ensure_ascii=False)
-
-    @tool
     def get_course_index() -> str:
         """列出已入库的课程、文档数量与文档名，供确认检索范围。"""
         return str(svc.course_index())
 
-    tools = [search_knowledge, generate_questions, grade_answer]
+    tools = [search_knowledge]
     if course_id is None:
         tools.append(get_course_index)
     return tools

@@ -25,9 +25,13 @@ def test_scoped_search_tool_forces_server_course_id():
     assert service.search_calls == [("进程调度", 7)]
 
 
-def test_scoped_agent_does_not_expose_course_index_tool():
-    scoped_names = {tool.name for tool in build_tools(FakeService(), course_id=7)}
-    global_names = {tool.name for tool in build_tools(FakeService(), course_id=None)}
+def test_scoped_agent_exposes_only_scoped_search():
+    names = {tool.name for tool in build_tools(FakeService(), course_id=7)}
 
-    assert "get_course_index" not in scoped_names
-    assert "get_course_index" in global_names
+    assert names == {"search_knowledge"}
+
+
+def test_global_agent_exposes_only_search_and_course_index():
+    names = {tool.name for tool in build_tools(FakeService(), course_id=None)}
+
+    assert names == {"search_knowledge", "get_course_index"}

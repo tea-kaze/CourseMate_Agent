@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from coursemate.db.models import ChatMessage, ChatSession, utcnow
+from coursemate.db.models import ChatMessage, ChatSession, utc_isoformat, utcnow
 
 
 def create_chat_session(
@@ -30,8 +30,8 @@ def list_chat_sessions(session: Session) -> list[dict]:
             "title": s.title,
             "course_id": s.course_id,
             "message_count": count,
-            "created_at": s.created_at.isoformat(),
-            "updated_at": s.updated_at.isoformat(),
+            "created_at": utc_isoformat(s.created_at),
+            "updated_at": utc_isoformat(s.updated_at),
         }
         for s, count in rows
     ]

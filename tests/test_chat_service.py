@@ -65,6 +65,34 @@ def test_run_chat_appends_to_existing_session_and_ignores_history(fresh_db):
     assert result["session_id"] == s.id
 
 
+def test_run_chat_uses_request_history_for_new_session(fresh_db):
+    class FakeAgent:
+        def invoke(self, state, config=None):
+            contents = [
+                message["content"]
+                for message in state["messages"]
+                if isinstance(message, dict)
+            ]
+            assert contents[-3:] == ["old question", "old answer", "follow up"]
+            state["messages"].append(
+                type("M", (), {"role": "assistant", "content": "new answer"})()
+            )
+            return state
+
+    result = chat_service.run_chat(
+        fresh_db,
+        message="follow up",
+        session_id=None,
+        history=[
+            {"role": "user", "content": "old question"},
+            {"role": "assistant", "content": "old answer"},
+        ],
+        agent=FakeAgent(),
+    )
+
+    assert result["answer"] == "new answer"
+
+
 def test_run_chat_compresses_long_history_and_persists_summary(fresh_db):
     s = chat_repo.create_chat_session(fresh_db)
     for i in range(30):
@@ -110,6 +138,27 @@ def test_run_chat_raises_when_session_missing(fresh_db):
     except chat_service.SessionNotFound:
         return
     raise AssertionError("会话不存在时应抛出 SessionNotFound")
+
+
+def test_run_chat_failure_preserves_new_session(fresh_db):
+    class BoomAgent:
+        def invoke(self, state, config=None):
+            raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        chat_service.run_chat(
+            fresh_db,
+            message="hello",
+            course_id=None,
+            session_id=None,
+            history=[],
+            agent=BoomAgent(),
+        )
+
+    fresh_db.rollback()
+    sessions = chat_repo.list_chat_sessions(fresh_db)
+    assert len(sessions) == 1
+    assert chat_repo.list_chat_messages(fresh_db, sessions[0]["id"]) == []
 
 
 def _stream_agent(chunks):
@@ -250,4 +299,27 @@ def test_run_chat_stream_error_does_not_save(fresh_db):
 
     sid = events[0]["session_id"]
     # 流中途失败：不落库任何消息
+    assert chat_repo.list_chat_messages(fresh_db, sid) == []
+
+
+def test_run_chat_stream_error_preserves_emitted_session_id(fresh_db):
+    class BoomAgent:
+        def stream(self, state, stream_mode=None, config=None):
+            raise RuntimeError("boom")
+            yield
+
+    events = list(
+        chat_service.run_chat_stream(
+            fresh_db,
+            message="hello",
+            course_id=None,
+            session_id=None,
+            history=[],
+            agent=BoomAgent(),
+        )
+    )
+    sid = events[0]["session_id"]
+
+    fresh_db.rollback()
+    assert chat_repo.get_chat_session(fresh_db, sid) is not None
     assert chat_repo.list_chat_messages(fresh_db, sid) == []

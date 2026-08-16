@@ -123,6 +123,8 @@ def chat_stream(
                 "session_id": session_id,
             },
         ) as resp:
+            if resp.status_code >= 400:
+                resp.read()
             _raise_for_status(resp)
             for line in resp.iter_lines():
                 if not line or not line.startswith("data:"):

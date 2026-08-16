@@ -13,6 +13,7 @@ from coursemate.db.models import (
     Document,
     DocumentStatus,
     Question,
+    utc_isoformat,
 )
 
 
@@ -260,7 +261,7 @@ def mistake_stats(
             "correct_answer": a.question.answer,
             "feedback": a.feedback,
             "score": a.score,
-            "created_at": a.created_at.isoformat(),
+            "created_at": utc_isoformat(a.created_at),
         }
         for a in attempts
         if not a.is_correct

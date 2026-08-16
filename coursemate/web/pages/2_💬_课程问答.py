@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from coursemate.app.schemas import MAX_CHAT_MESSAGE_CHARS
 from coursemate.web.api_client import (
     chat_stream,
     create_chat_session,
@@ -65,7 +66,10 @@ for m in messages:
     with st.chat_message(m["role"]):
         st.markdown(m["content"])
 
-prompt = st.chat_input("输入你的课程问题，例如：什么是进程调度？")
+prompt = st.chat_input(
+    "输入你的课程问题，例如：什么是进程调度？",
+    max_chars=MAX_CHAT_MESSAGE_CHARS,
+)
 if prompt:
     with st.chat_message("user"):
         st.markdown(prompt)

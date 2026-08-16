@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 # 使用 python-dotenv 加载项目根目录的 .env 文件（不存在时静默跳过）。
 # 加载后的变量会写入进程环境，后续 BaseSettings 优先读取系统环境变量。
@@ -16,7 +20,7 @@ load_dotenv()
 class Settings(BaseSettings):
     """CourseMate 运行配置。
 
-    默认使用 SQLite + 本地 Milvus（lite 模式），可切换为 PostgreSQL 与远程 Milvus。
+    PostgreSQL 与远程 Milvus 是必需的持久化服务。
     """
 
     model_config = SettingsConfigDict(
@@ -34,11 +38,12 @@ class Settings(BaseSettings):
     SILICONFLOW_BASE_URL: str = "https://api.siliconflow.cn/v1"
 
     # ---- 存储 ----
-    DATABASE_URL: str = "sqlite:///./data/coursemate.db"
-    MILVUS_URI: str = "./data/milvus_lite.db"
+    DATABASE_URL: str
+    MILVUS_URI: str
     MILVUS_TOKEN: str = ""
     MILVUS_COLLECTION: str = "coursemate_kb"
     UPLOAD_DIR: str = "data/uploads"
+    MAX_UPLOAD_MB: int = Field(default=50, gt=0)
 
     # ---- RAG ----
     CHUNK_SIZE: int = 800
@@ -56,9 +61,45 @@ class Settings(BaseSettings):
     LANGSMITH_PROJECT: str = "coursemate"
     LANGSMITH_ENDPOINT: str = "https://api.smith.langchain.com"
 
-    @property
-    def is_postgres(self) -> bool:
-        return self.DATABASE_URL.startswith("postgresql")
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def validate_database_url(cls, value: str) -> str:
+        return normalize_database_url(value)
+
+    @field_validator("MILVUS_URI")
+    @classmethod
+    def validate_milvus_uri(cls, value: str) -> str:
+        value = value.strip()
+        try:
+            parsed = urlsplit(value)
+            hostname = parsed.hostname
+        except ValueError as exc:
+            raise ValueError(
+                "MILVUS_URI must be an http:// or https:// remote endpoint"
+            ) from exc
+        if parsed.scheme not in {"http", "https"} or not hostname:
+            raise ValueError(
+                "MILVUS_URI must be an http:// or https:// remote endpoint with a hostname"
+            )
+        return value
+
+def normalize_database_url(value: str) -> str:
+    """Validate the PostgreSQL driver and return its canonical SQLAlchemy URL."""
+    value = value.strip()
+    try:
+        drivername = make_url(value).drivername
+    except (ArgumentError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "DATABASE_URL must be a PostgreSQL URL using the psycopg driver"
+        ) from exc
+
+    if drivername == "postgresql":
+        return f"postgresql+psycopg://{value.removeprefix('postgresql://')}"
+    if drivername != "postgresql+psycopg":
+        raise ValueError(
+            "DATABASE_URL must be a PostgreSQL URL using the psycopg driver"
+        )
+    return value
 
 
 @lru_cache

@@ -2,11 +2,37 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+import pytest
 from sqlalchemy import select
 
 from coursemate.db import repo
 from coursemate.db.models import Course, utcnow
 from scripts import cleanup_orphans
+
+
+def test_empty_milvus_requires_explicit_override_for_destructive_cleanup():
+    with pytest.raises(cleanup_orphans.UnsafeCleanupError, match="Milvus"):
+        cleanup_orphans.validate_empty_milvus_cleanup(
+            milvus_ids=set(),
+            has_ready_documents=True,
+            dry_run=False,
+            allow_empty_milvus=False,
+        )
+
+
+@pytest.mark.parametrize(
+    ("dry_run", "allow_empty_milvus"),
+    [(True, False), (False, True)],
+)
+def test_empty_milvus_allows_dry_run_or_explicit_override(
+    dry_run, allow_empty_milvus
+):
+    cleanup_orphans.validate_empty_milvus_cleanup(
+        milvus_ids=set(),
+        has_ready_documents=True,
+        dry_run=dry_run,
+        allow_empty_milvus=allow_empty_milvus,
+    )
 
 
 def test_cleanup_candidates_include_only_ready_orphans_and_stale_ingestions(fresh_db):
@@ -61,8 +87,10 @@ def test_milvus_document_ids_reads_every_iterator_batch(monkeypatch):
     iterator = FakeIterator()
 
     class FakeClient:
-        def __init__(self, uri):
-            self.uri = uri
+        last_connection_args = None
+
+        def __init__(self, **connection_args):
+            type(self).last_connection_args = connection_args
 
         def list_collections(self):
             return ["coursemate_kb"]
@@ -82,11 +110,18 @@ def test_milvus_document_ids_reads_every_iterator_batch(monkeypatch):
     monkeypatch.setattr(
         cleanup_orphans,
         "_connection_args",
-        lambda: {"uri": "fake.db"},
+        lambda: {
+            "uri": "https://milvus.example.com:19530",
+            "token": "user:password",
+        },
     )
 
     assert cleanup_orphans._milvus_document_ids() == {1, 2, 3}
     assert iterator.closed is True
+    assert cleanup_orphans.MilvusClient.last_connection_args == {
+        "uri": "https://milvus.example.com:19530",
+        "token": "user:password",
+    }
 
 
 def test_cleanup_empty_courses_after_documents_deleted_in_same_session(fresh_db):

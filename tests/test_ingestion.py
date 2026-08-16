@@ -8,13 +8,11 @@ from types import SimpleNamespace
 
 import pytest
 from langchain_core.documents import Document as LangChainDocument
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import select
 
 from coursemate.app import ingestion
 from coursemate.app.ingestion import IngestionError, ingest_file, validate_suffix
-from coursemate.db.models import Base, Document
+from coursemate.db.models import Document
 
 
 def test_validate_suffix_accepts_docx():
@@ -43,15 +41,10 @@ class _FakeVectorstore:
         self.documents.extend(documents[1:])
 
 
-def _install_ingestion_fakes(monkeypatch, tmp_path, *, vectorstore):
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine, expire_on_commit=False)
-    monkeypatch.setattr(ingestion, "init_db", lambda: None)
+def _install_ingestion_fakes(
+    monkeypatch, tmp_path, *, vectorstore, session_factory
+):
+    Session = session_factory
     monkeypatch.setattr(
         ingestion,
         "get_settings",
@@ -75,10 +68,15 @@ def _install_ingestion_fakes(monkeypatch, tmp_path, *, vectorstore):
     return Session
 
 
-def test_ingest_file_transitions_pending_document_to_ready(monkeypatch, tmp_path):
+def test_ingest_file_transitions_pending_document_to_ready(
+    monkeypatch, tmp_path, postgres_session_factory
+):
     vectorstore = _FakeVectorstore()
     Session = _install_ingestion_fakes(
-        monkeypatch, tmp_path, vectorstore=vectorstore
+        monkeypatch,
+        tmp_path,
+        vectorstore=vectorstore,
+        session_factory=postgres_session_factory,
     )
 
     result = ingest_file("chapter.md", b"content", "数据库")
@@ -97,11 +95,14 @@ def test_ingest_file_transitions_pending_document_to_ready(monkeypatch, tmp_path
 
 
 def test_ingest_file_compensates_partial_vectors_and_marks_failed(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, postgres_session_factory
 ):
     vectorstore = _FakeVectorstore(RuntimeError("embedding failed"))
     Session = _install_ingestion_fakes(
-        monkeypatch, tmp_path, vectorstore=vectorstore
+        monkeypatch,
+        tmp_path,
+        vectorstore=vectorstore,
+        session_factory=postgres_session_factory,
     )
     deleted_ids: list[int] = []
     monkeypatch.setattr(
@@ -124,11 +125,14 @@ def test_ingest_file_compensates_partial_vectors_and_marks_failed(
 
 
 def test_ingest_file_compensates_vectors_when_ready_commit_fails(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, postgres_session_factory
 ):
     vectorstore = _FakeVectorstore()
     Session = _install_ingestion_fakes(
-        monkeypatch, tmp_path, vectorstore=vectorstore
+        monkeypatch,
+        tmp_path,
+        vectorstore=vectorstore,
+        session_factory=postgres_session_factory,
     )
     deleted_ids: list[int] = []
     monkeypatch.setattr(
@@ -170,10 +174,15 @@ def test_ingest_file_compensates_vectors_when_ready_commit_fails(
 
 
 def test_ingest_file_cleans_partial_file_when_initial_write_fails(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, postgres_session_factory
 ):
     vectorstore = _FakeVectorstore()
-    _install_ingestion_fakes(monkeypatch, tmp_path, vectorstore=vectorstore)
+    _install_ingestion_fakes(
+        monkeypatch,
+        tmp_path,
+        vectorstore=vectorstore,
+        session_factory=postgres_session_factory,
+    )
 
     def partial_write(path: Path, content: bytes) -> int:
         with path.open("wb") as stream:
@@ -189,11 +198,14 @@ def test_ingest_file_cleans_partial_file_when_initial_write_fails(
 
 
 def test_ingest_file_records_failure_when_upload_cleanup_fails(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, postgres_session_factory
 ):
     vectorstore = _FakeVectorstore(RuntimeError("embedding failed"))
     Session = _install_ingestion_fakes(
-        monkeypatch, tmp_path, vectorstore=vectorstore
+        monkeypatch,
+        tmp_path,
+        vectorstore=vectorstore,
+        session_factory=postgres_session_factory,
     )
 
     def fail_unlink(path: Path, *, missing_ok: bool = False) -> None:

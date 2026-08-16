@@ -4,23 +4,11 @@ from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from pymilvus import MilvusException
 
 from coursemate.app import ingestion, main
 from coursemate.db import repo
-from coursemate.db.models import Base, DocumentStatus
-
-
-def _session_factory():
-    engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    return sessionmaker(bind=engine, expire_on_commit=False)
+from coursemate.db.models import DocumentStatus
 
 
 def _ready_document(Session, tmp_path):
@@ -42,20 +30,26 @@ def test_delete_document_file_preserves_file_when_vector_delete_fails(
     source = tmp_path / "chapter.md"
     source.write_text("content", encoding="utf-8")
 
-    class FailingVectorstore:
+    class FailingClient:
         def delete(self, **kwargs):
-            raise RuntimeError("milvus unavailable")
+            raise MilvusException(message="milvus unavailable")
+
+    class FailingVectorstore:
+        client = FailingClient()
+        collection_name = "coursemate_kb"
 
     monkeypatch.setattr(ingestion, "get_vectorstore", lambda: FailingVectorstore())
 
-    with pytest.raises(RuntimeError, match="milvus unavailable"):
+    with pytest.raises(MilvusException, match="milvus unavailable"):
         ingestion.delete_document_file(7, str(source))
 
     assert source.exists()
 
 
-def test_delete_route_marks_failure_and_keeps_metadata(monkeypatch, tmp_path):
-    Session = _session_factory()
+def test_delete_route_marks_failure_and_keeps_metadata(
+    monkeypatch, tmp_path, postgres_session_factory
+):
+    Session = postgres_session_factory
     document_id, source = _ready_document(Session, tmp_path)
     observed_statuses: list[str] = []
     monkeypatch.setattr(main, "get_session", Session)
@@ -81,8 +75,10 @@ def test_delete_route_marks_failure_and_keeps_metadata(monkeypatch, tmp_path):
     assert source.exists()
 
 
-def test_delete_route_retries_delete_failed_document(monkeypatch, tmp_path):
-    Session = _session_factory()
+def test_delete_route_retries_delete_failed_document(
+    monkeypatch, tmp_path, postgres_session_factory
+):
+    Session = postgres_session_factory
     document_id, source = _ready_document(Session, tmp_path)
     with Session() as session:
         row = repo.get_document(session, document_id)

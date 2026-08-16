@@ -25,6 +25,20 @@ class SessionCourseConflict(Exception):
     pass
 
 
+def _request_history_messages(history: list[Any] | None) -> list[dict[str, str]]:
+    messages: list[dict[str, str]] = []
+    for item in history or []:
+        if isinstance(item, dict):
+            role = item.get("role")
+            content = item.get("content")
+        else:
+            role = getattr(item, "role", None)
+            content = getattr(item, "content", None)
+        if role in {"user", "assistant"} and isinstance(content, str) and content:
+            messages.append({"role": role, "content": content})
+    return messages
+
+
 def _resolve_session(db: Session, course_id: int | None, session_id: int | None):
     if session_id is None:
         if course_id is not None and get_course(db, course_id) is None:
@@ -46,7 +60,7 @@ def run_chat(
     message: str,
     course_id: int | None = None,
     session_id: int | None = None,
-    history: list[dict] | None = None,
+    history: list[Any] | None = None,
     agent: Any | None = None,
     llm: Any | None = None,
 ) -> dict:
@@ -55,16 +69,16 @@ def run_chat(
 
     if session_id is None and history:
         # 兼容旧调用方：未指定会话时沿用请求携带的历史
-        history_msgs = [
-            {"role": role, "content": content}
-            for role, content in history
-            if role in {"user", "assistant"} and content
-        ]
+        history_msgs = _request_history_messages(history)
     else:
         history_msgs = [
             {"role": m.role, "content": m.content}
             for m in chat_repo.list_chat_messages(db, chat_session.id)
         ]
+    # End all session lookup/creation work before potentially slow LLM calls.
+    # A newly created session must also survive a later Agent failure because
+    # its ID may already have been returned to the client.
+    db.commit()
     ctx_msgs, new_summary = context.build_chat_context(
         history_msgs, chat_session.summary, llm=llm
     )
@@ -108,7 +122,7 @@ def run_chat_stream(
     message: str,
     course_id: int | None = None,
     session_id: int | None = None,
-    history: list[dict] | None = None,
+    history: list[Any] | None = None,
     agent: Any | None = None,
     llm: Any | None = None,
 ):
@@ -126,16 +140,13 @@ def run_chat_stream(
     chat_session, effective_course_id = _resolve_session(db, course_id, session_id)
 
     if session_id is None and history:
-        history_msgs = [
-            {"role": role, "content": content}
-            for role, content in history
-            if role in {"user", "assistant"} and content
-        ]
+        history_msgs = _request_history_messages(history)
     else:
         history_msgs = [
             {"role": m.role, "content": m.content}
             for m in chat_repo.list_chat_messages(db, chat_session.id)
         ]
+    db.commit()
     ctx_msgs, new_summary = context.build_chat_context(
         history_msgs, chat_session.summary, llm=llm
     )
