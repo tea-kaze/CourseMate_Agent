@@ -2,13 +2,13 @@
 
 一个面向「课程资料学习 + 刷题巩固」的 Web 应用。课程问答使用 LangGraph ReAct Agent 完成检索与回答；自动出题和批改使用固定编排的 RAG + 结构化 LLM 工作流，最后通过错题本复盘薄弱知识点。
 
-## 功能闭环
+## 功能流程
 
 ```mermaid
 flowchart LR
     A[上传课程资料] --> B[文档解析与向量化]
     B --> C[(Milvus 向量库)]
-    B --> D[(SQLite/PostgreSQL 元数据)]
+    B --> D[(PostgreSQL 业务数据)]
     C --> E[Agent 检索问答]
     C --> F[自动出题]
     F --> G[在线作答与批改]
@@ -20,7 +20,7 @@ flowchart LR
 
 1. **资料管理**：上传 PDF / Markdown / TXT / Word（.docx），自动解析、切分、向量化入库；入库和删除使用状态机记录中间状态及失败原因，失败删除可以重试。
 2. **课程问答**：Agent 检索课程资料后回答，回答带来源引用；支持多会话管理
-   （新建/切换/删除，SQLite 持久化，重启后记录不丢）；回答流式输出（SSE 逐 token）；
+   （新建/切换/删除，PostgreSQL 持久化，重启后记录不丢）；回答流式输出（SSE 逐 token）；
    长对话自动上下文压缩（增量摘要 + 最近消息窗口），控制 token 成本并保持连贯；
    资料中没有的内容会明确说明，不编造。
 3. **刷题练习**：按课程、知识点、题型（单选/多选/简答/混合）自动生成题目，在线作答并批改。
@@ -35,7 +35,7 @@ flowchart LR
 - **RAG**：LangChain Loader + RecursiveCharacterTextSplitter + Milvus 向量库
 - **后端**：FastAPI（REST API，Swagger 文档）
 - **前端**：Streamlit（四页面）
-- **存储**：Milvus（向量）+ SQLite（默认业务数据）/ PostgreSQL（可选）
+- **存储**：Docker/远程 Milvus（向量）+ PostgreSQL（业务数据与自动化测试）
 - **可观测性**：LangSmith（可选，设置密钥即自动 trace Agent 每次调用）
 
 架构示意：
@@ -56,7 +56,7 @@ flowchart TB
     end
     subgraph Storage[存储层]
         MILVUS[(Milvus 向量库)]
-        DB[(SQLite / PostgreSQL)]
+        DB[(PostgreSQL)]
     end
     Frontend --> API
     API --> Chat & Quiz
@@ -70,76 +70,155 @@ flowchart TB
 
 ### 1. 环境准备
 
-- Python 3.12+，安装 [uv](https://docs.astral.sh/uv/)
-- 可选：Docker Desktop（使用 Docker 版 Milvus 时）
+- Python 3.12+
+- [uv](https://docs.astral.sh/uv/)
+- PostgreSQL，并提前创建 CourseMate 使用的数据库和账号
+- Docker Desktop（本地运行 Milvus 时需要；也可使用可访问的托管 Milvus）
 
 ### 2. 安装依赖
 
-```bash
-cd 个人项目
+在 PowerShell 中进入项目目录并同步依赖：
+
+```powershell
+Set-Location 'D:\Code\Agent_Project\个人项目'
 uv sync
 ```
 
-### 3. 配置密钥
+### 3. 配置环境变量
 
-```bash
-cp .env.example .env
-# 编辑 .env，填入：
-# DEEPSEEK_API_KEY   从 https://platform.deepseek.com 获取
-# SILICONFLOW_API_KEY 从 https://cloud.siliconflow.cn 获取
-# （可选）LANGSMITH_API_KEY + LANGSMITH_TRACING=true，开启 LangSmith 可观测性
+首次运行且项目中还没有 `.env` 时：
+
+```powershell
+Copy-Item .env.example .env
 ```
 
-### 4. 升级数据库
+编辑 `.env`，至少配置以下字段：
 
-首次启动和拉取包含数据库结构变更的版本后，都先执行。使用 PostgreSQL 时，应先配置目标 `DATABASE_URL`，再对该数据库执行迁移：
+```dotenv
+DATABASE_URL=postgresql+psycopg://用户名:密码@数据库地址:5432/coursemate
+TEST_DATABASE_URL=postgresql+psycopg://用户名:密码@数据库地址:5432/coursemate_test
+DEEPSEEK_API_KEY=你的密钥
+SILICONFLOW_API_KEY=你的密钥
+MILVUS_URI=http://localhost:19530
+MILVUS_TOKEN=
+MILVUS_COLLECTION=coursemate_kb
+UPLOAD_DIR=data/uploads
+MAX_UPLOAD_MB=50
+```
 
-```bash
+`DATABASE_URL` 和 `MILVUS_URI` 是运行时必填配置。数据库只接受 PostgreSQL，Milvus 只接受
+带主机名的 `http://` 或 `https://` 地址；缺失或传入本地文件路径时会在启动阶段明确失败，
+不会回退到其他存储。密码含 `@`、`:`、`/` 等字符时，需要先做 URL 编码。
+
+`TEST_DATABASE_URL` 只用于 pytest，必须指向独立且名称以 `_test` 结尾的数据库，并且不能与
+`DATABASE_URL` 指向同一个数据库。
+
+`MAX_UPLOAD_MB` 默认 50，按 `1024 * 1024` 字节计算。后端最多读取“上限 + 1 字节”用于
+判定超限，超过后返回 HTTP 413；聊天当前消息和请求历史中的单条消息最多 4000 字符，
+请求历史最多 50 条。
+
+### 4. 准备 Milvus
+
+**本地开发：Docker Milvus（推荐）**
+
+项目的 `docker-compose.yml` 只启动 Milvus、etcd 和 MinIO，不会启动 PostgreSQL：
+
+```powershell
+docker compose up -d
+docker compose ps
+```
+
+等待三个服务进入 `running` 或 `healthy`，并确认 `.env` 中配置：
+
+```dotenv
+MILVUS_URI=http://localhost:19530
+```
+
+使用托管 Milvus 时改为服务商提供的 HTTPS 地址，并按要求填写 token：
+
+```dotenv
+MILVUS_URI=https://你的-Milvus-地址
+MILVUS_TOKEN=你的-token
+```
+
+### 5. 升级 PostgreSQL
+
+首次启动以及拉取包含数据库结构变更的代码后，都执行：
+
+```powershell
 uv run alembic upgrade head
+uv run alembic current
 ```
 
-该命令既能初始化空数据库，也会把旧数据库中的已有文档迁移为 `ready` 状态。
+迁移命令读取 `.env` 中的 `DATABASE_URL`，可初始化空数据库，也可升级已有数据库；重复执行
+不会清空现有数据。当前版本应显示 `20260816_0002 (head)`。
 
-### 5. 启动（二选一）
+### 6. 启动后端与前端
 
-**方式 A：Milvus Lite（零 Docker，适合快速体验）**
+终端 1 启动 FastAPI：
 
-默认配置 `MILVUS_URI=./data/milvus_lite.db`，直接启动即可：
+```powershell
+Set-Location 'D:\Code\Agent_Project\个人项目'
+.\scripts\run_api.ps1
+```
 
-```bash
-# 终端 1：启动后端 API
+终端 2 启动 Streamlit：
+
+```powershell
+Set-Location 'D:\Code\Agent_Project\个人项目'
+.\scripts\run_web.ps1
+```
+
+启动完成后访问：
+
+- Web：<http://localhost:8501>
+- API 健康检查：<http://127.0.0.1:8000/health>
+- Swagger：<http://127.0.0.1:8000/docs>
+
+如果 PowerShell 执行策略阻止脚本，可直接执行等价命令：
+
+```powershell
 uv run uvicorn coursemate.app.main:app --reload --port 8000
-
-# 终端 2：启动 Web 界面
 uv run streamlit run coursemate/web/app.py
 ```
 
-打开 http://localhost:8501 使用。
+正确的启动顺序是：
 
-**方式 B：Docker 版 Milvus + PostgreSQL（完整服务组合）**
-
-```bash
-# 1. 启动 Milvus 全家桶
-docker compose up -d
-
-# 2. 修改 .env
-# MILVUS_URI=http://localhost:19530
-# DATABASE_URL=postgresql+psycopg://postgres:密码@数据库地址:5432/coursemate
-
-# 3. 在 PostgreSQL 上执行迁移
-uv run alembic upgrade head
-
-# 4. 启动后端与 Web（同上）
+```text
+PostgreSQL + Milvus -> Alembic 迁移 -> FastAPI -> Streamlit
 ```
 
-### 6. 导入演示资料（可选）
+### 7. 停止服务
 
-```bash
+在后端和前端各自的终端按 `Ctrl+C`。需要同时停止 Docker Milvus 时执行：
+
+```powershell
+docker compose stop
+```
+
+不要使用 `docker compose down -v`，该命令会删除 Milvus 持久化卷。
+
+### 8. 导入演示资料（可选）
+
+```powershell
 uv run python scripts/seed_demo.py
 ```
 
 内置演示资料位于 `data/demo/`，覆盖操作系统、数据库、Java、英语四个课程
-（文件名格式「课程名-主题.md」，导入时自动归入对应课程），导入后即可直接体验问答与刷题。
+（文件名格式「课程名-主题.md」，导入时自动归入对应课程）。当前脚本重复运行会产生重复文档，
+建议只在空数据环境执行一次。
+
+### 9. 清理孤儿数据（可选）
+
+先使用只读模式检查候选项：
+
+```powershell
+uv run python scripts/cleanup_orphans.py --dry-run
+```
+
+如果 Milvus 集合为空但 PostgreSQL 仍存在 `ready` 文档，脚本会拒绝实际删除，避免连接错误或
+向量迁移期间误删全部元数据。只有在确认向量确实已经丢失时，才能显式添加
+`--allow-empty-milvus` 执行危险清理。
 
 ## 项目结构
 
@@ -163,10 +242,9 @@ uv run python scripts/seed_demo.py
 ├── data/
 │   ├── demo/              # 演示资料
 │   ├── eval/              # RAG 评估 golden set
-│   ├── uploads/           # 上传的文档原文
-│   └── coursemate.db      # SQLite 业务数据（自动生成）
+│   └── uploads/           # 上传的文档原文
 ├── tests/                 # 单元测试
-├── docker-compose.yml     # Milvus + etcd + MinIO
+├── docker-compose.yml     # Milvus + etcd + MinIO（不包含 PostgreSQL）
 ├── .env.example           # 环境变量模板
 └── pyproject.toml
 ```
@@ -186,21 +264,34 @@ uv run python scripts/seed_demo.py
 | POST | `/chat/sessions` | 新建会话（课程范围创建后不可修改） |
 | GET | `/chat/sessions/{id}/messages` | 读取某会话的全部消息 |
 | DELETE | `/chat/sessions/{id}` | 删除会话（级联删除消息） |
-| POST | `/questions/generate` | 自动出题（响应不含答案与解析） |
+| POST | `/questions/generate` | 自动出题（响应不含答案与解析；无检索资料时返回 409） |
 | POST | `/questions/{id}/grade` | 批改作答（成功后返回答案与解析） |
 | GET | `/stats/mistakes` | 错题统计（可按课程、题型、知识点过滤） |
 | GET | `/health` | 健康检查 |
 
 ## 测试
 
-```bash
-uv run pytest -q
+测试账号需要拥有在 `coursemate_test` 中创建和删除 schema 的权限。普通测试不会连接业务 Milvus
+集合，也不会调用 DeepSeek、硅基流动或 LangSmith：
+
+```powershell
+uv run pytest -m "not integration" -q
 ```
 
-当前共有 22 个测试文件、97 项自动化测试。覆盖：文档加载与切分（含 .docx 解析）、空 PDF/空 Word 报错、课程/文档/题目/
+所有数据库测试都使用 `TEST_DATABASE_URL` 中随机生成的临时 schema，测试结束后执行
+`DROP SCHEMA ... CASCADE`；配置缺失、指向开发库或数据库名不以 `_test` 结尾时，pytest 会拒绝运行。
+
+远程 Milvus 冒烟测试会创建并删除唯一的 `coursemate_test_*` 集合，需要显式执行：
+
+```powershell
+uv run pytest tests/test_milvus_integration.py -m integration -q
+```
+
+测试覆盖：文档加载与切分（含 .docx 解析）、空 PDF/空 Word 报错、课程/文档/题目/
 作答的仓库逻辑、错题统计与题型/知识点筛选、会话与消息持久化、上下文压缩
 （增量摘要/失败降级）、入库/删除补偿与迁移、课程隔离、出题与批改的公开接口契约，
-以及问答/刷题/错题本页面的 Streamlit AppTest 交互测试。
+聊天事务边界、请求历史校验、SSE 错误响应、空知识库出题保护，以及问答/刷题/错题本页面的
+Streamlit AppTest 交互测试。
 
 ## RAG 评估
 
@@ -223,7 +314,7 @@ uv run python scripts/eval_rag.py --faithfulness
 - **问答与刷题分开编排**：课程问答使用 LangGraph ReAct Agent 决定何时检索；出题和批改由 API 直接执行固定的 RAG + 结构化 LLM 步骤，接口行为更容易约束和测试。
 - **服务端课程隔离**：会话创建后以 `ChatSession.course_id` 为唯一课程范围，检索工具不接收模型提供的课程 ID，避免提示词或模型工具参数绕过范围。
 - **可补偿的文档状态机**：只有 `ready` 文档对列表和检索可见；入库或删除失败保留失败状态，清理脚本与删除接口可继续补偿。
-- **Milvus + SQLite/PostgreSQL 分离**：向量检索与业务数据解耦；本地零依赖可跑（Milvus Lite），需要时可无缝切换 Docker 版 Milvus。
+- **Milvus + PostgreSQL 分离**：Docker/远程 Milvus 负责向量检索，PostgreSQL 负责课程、文档状态、会话、题目和作答记录；运行与测试都不提供 SQLite 或本地文件向量库回退。
 - **DeepSeek + 硅基流动**：中文效果好、成本低；Embedding 用 API 避免本地模型安装负担。
 - **FastAPI + Streamlit**：后端接口标准、可测试、自带 Swagger；前端四页面按功能组织，演示直观。
 

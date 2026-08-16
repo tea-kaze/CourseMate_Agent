@@ -3,9 +3,10 @@
 ## 准备
 
 1. 确认 `.env` 已配置 DeepSeek 与硅基流动密钥。
-2. 启动后端：`uv run uvicorn coursemate.app.main:app --port 8000`
-3. 启动前端：`uv run streamlit run coursemate/web/app.py`
-4. 如使用演示资料，先执行：`uv run python scripts/seed_demo.py`
+2. 确认 PostgreSQL 与 Docker/远程 Milvus 可访问，并执行 `uv run alembic upgrade head`。
+3. 启动后端：`uv run uvicorn coursemate.app.main:app --port 8000`
+4. 启动前端：`uv run streamlit run coursemate/web/app.py`
+5. 如使用演示资料，先执行：`uv run python scripts/seed_demo.py`
 
 ## 演示流程
 
@@ -30,7 +31,7 @@
 
 ## 面试话术要点
 
-- 为什么单 Agent 多工具：复杂度可控、每个工具职责单一、便于扩展成多 Agent。
+- 为什么问答 Agent 只暴露检索工具：权限边界明确，课程范围由服务端固定，避免模型绕过隔离。
 - 为什么 Milvus：支持高维向量索引与元数据过滤，适合课程维度检索。
 - 为什么结构化输出：出题和批改用 Pydantic Schema 约束，保证 API 契约稳定。
 - 做得好的点：答案带引用、资料外问题明确拒答、删除文档同步清理向量。
