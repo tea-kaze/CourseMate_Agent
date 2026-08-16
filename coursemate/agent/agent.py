@@ -18,7 +18,7 @@ SYSTEM_PROMPT = (
 )
 
 
-def build_agent():
+def build_agent(course_id: int | None = None):
     """构建 LangGraph ReAct Agent。
 
     create_react_agent 会生成一个"思考-调用工具-观察结果"循环：
@@ -26,8 +26,14 @@ def build_agent():
     prompt 中的系统提示词约束了回答行为（必须引用来源、不许编造）。
     """
     llm = get_llm(temperature=0.2)
+    prompt = SYSTEM_PROMPT
+    if course_id is not None:
+        prompt += (
+            f"\n当前会话固定在课程 ID {course_id}；检索工具已由服务端绑定该范围，"
+            "不得尝试访问其他课程。"
+        )
     return create_react_agent(
         model=llm,
-        tools=build_tools(),
-        prompt=SYSTEM_PROMPT,
+        tools=build_tools(course_id=course_id),
+        prompt=prompt,
     )

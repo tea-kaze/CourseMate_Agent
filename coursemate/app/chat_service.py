@@ -10,10 +10,34 @@ from sqlalchemy.orm import Session
 
 from coursemate.agent import context
 from coursemate.db import chat_repo
+from coursemate.db.repo import get_course
 
 
 class SessionNotFound(Exception):
     pass
+
+
+class CourseNotFound(Exception):
+    pass
+
+
+class SessionCourseConflict(Exception):
+    pass
+
+
+def _resolve_session(db: Session, course_id: int | None, session_id: int | None):
+    if session_id is None:
+        if course_id is not None and get_course(db, course_id) is None:
+            raise CourseNotFound("课程不存在")
+        chat_session = chat_repo.create_chat_session(db, course_id=course_id)
+    else:
+        chat_session = chat_repo.get_chat_session(db, session_id)
+        if chat_session is None:
+            raise SessionNotFound("会话不存在")
+        if course_id is not None and course_id != chat_session.course_id:
+            raise SessionCourseConflict("会话课程范围与请求不一致，请新建会话后切换课程")
+    db.flush()
+    return chat_session, chat_session.course_id
 
 
 def run_chat(
@@ -27,13 +51,7 @@ def run_chat(
     llm: Any | None = None,
 ) -> dict:
     """执行一轮问答：解析/创建会话 → 压缩上下文 → 调 Agent → 落库。"""
-    if session_id is None:
-        chat_session = chat_repo.create_chat_session(db, course_id=course_id)
-    else:
-        chat_session = chat_repo.get_chat_session(db, session_id)
-        if chat_session is None:
-            raise SessionNotFound("会话不存在")
-    db.flush()
+    chat_session, effective_course_id = _resolve_session(db, course_id, session_id)
 
     if session_id is None and history:
         # 兼容旧调用方：未指定会话时沿用请求携带的历史
@@ -52,22 +70,20 @@ def run_chat(
     )
 
     raw_message = message
-    if course_id:
-        message = f"[课程范围：{course_id}] {message}"
     agent_messages = list(ctx_msgs)
     agent_messages.append({"role": "user", "content": message})
 
     if agent is None:
         from coursemate.agent.agent import build_agent
 
-        agent = build_agent()
+        agent = build_agent(effective_course_id)
     result = agent.invoke(
         {"messages": agent_messages},
         config={
             "metadata": {
                 "flow": "chat",
                 "session_id": chat_session.id,
-                "course_id": course_id,
+                "course_id": effective_course_id,
             }
         },
     )
@@ -107,13 +123,7 @@ def run_chat_stream(
     - {"type": "token", "content": str}    —— 回答 token
     - {"type": "error", "message": str}    —— 流中途失败（此时不落库）
     """
-    if session_id is None:
-        chat_session = chat_repo.create_chat_session(db, course_id=course_id)
-    else:
-        chat_session = chat_repo.get_chat_session(db, session_id)
-        if chat_session is None:
-            raise SessionNotFound("会话不存在")
-    db.flush()
+    chat_session, effective_course_id = _resolve_session(db, course_id, session_id)
 
     if session_id is None and history:
         history_msgs = [
@@ -131,15 +141,13 @@ def run_chat_stream(
     )
 
     raw_message = message
-    if course_id:
-        message = f"[课程范围：{course_id}] {message}"
     agent_messages = list(ctx_msgs)
     agent_messages.append({"role": "user", "content": message})
 
     if agent is None:
         from coursemate.agent.agent import build_agent
 
-        agent = build_agent()
+        agent = build_agent(effective_course_id)
 
     yield {"type": "meta", "session_id": chat_session.id}
 
@@ -151,7 +159,7 @@ def run_chat_stream(
                 "metadata": {
                     "flow": "chat_stream",
                     "session_id": chat_session.id,
-                    "course_id": course_id,
+                    "course_id": effective_course_id,
                 }
             },
             stream_mode="messages",

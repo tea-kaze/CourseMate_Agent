@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ChatRequest(BaseModel):
@@ -40,7 +40,8 @@ class GenerateQuestionsRequest(BaseModel):
 
 
 class GradeRequest(BaseModel):
-    question_id: int
+    model_config = ConfigDict(extra="forbid")
+
     user_answer: str = Field(min_length=1)
 
 
@@ -61,12 +62,20 @@ class DocumentOut(BaseModel):
     created_at: str
 
 
-class QuestionOut(BaseModel):
+class QuestionPublicOut(BaseModel):
     id: int
     course_id: int
     qtype: str
     topic: str
     stem: str
     options: list[str]
-    answer: str
+
+
+class GradeOut(BaseModel):
+    attempt_id: int
+    is_correct: bool
+    score: float
+    feedback: str
+    knowledge_point: str
+    correct_answer: str
     explanation: str

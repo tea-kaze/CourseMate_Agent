@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from typing import Any
 
 import httpx
 import streamlit as st
@@ -18,17 +19,49 @@ def _client() -> httpx.Client:
     return httpx.Client(base_url=api_base(), timeout=120)
 
 
+def _response_detail(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return response.text.strip()[:500] or "后端未返回错误内容"
+    if isinstance(payload, dict):
+        detail = payload.get("detail")
+    else:
+        detail = payload
+    return str(detail) if detail else "后端未返回错误内容"
+
+
+def _raise_for_status(response: httpx.Response) -> None:
+    if response.status_code >= 400:
+        raise RuntimeError(
+            f"后端请求失败（HTTP {response.status_code}）：{_response_detail(response)}"
+        )
+
+
+def _response_json(response: httpx.Response) -> Any:
+    _raise_for_status(response)
+    try:
+        return response.json()
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        content_type = response.headers.get("content-type", "未知类型")
+        raise RuntimeError(
+            f"后端返回无法解析的响应（HTTP {response.status_code}，{content_type}）"
+        ) from exc
+
+
 @st.cache_data(ttl=10)
 def get_courses() -> list[dict]:
     """课程列表（10 秒缓存，避免每次重绘都打后端）。"""
     with _client() as client:
-        return client.get("/courses").json()
+        response = client.get("/courses")
+    return _response_json(response)
 
 
 @st.cache_data(ttl=10)
 def get_documents() -> list[dict]:
     with _client() as client:
-        return client.get("/documents").json()
+        response = client.get("/documents")
+    return _response_json(response)
 
 
 def upload_document(filename: str, content: bytes, course_name: str) -> dict:
@@ -38,16 +71,13 @@ def upload_document(filename: str, content: bytes, course_name: str) -> dict:
             files={"file": (filename, content)},
             data={"course_name": course_name},
         )
-    if resp.status_code >= 400:
-        raise RuntimeError(resp.json().get("detail", resp.text))
-    return resp.json()
+    return _response_json(resp)
 
 
 def delete_document(document_id: int) -> None:
     with _client() as client:
         resp = client.delete(f"/documents/{document_id}")
-    if resp.status_code >= 400:
-        raise RuntimeError(resp.json().get("detail", resp.text))
+    _raise_for_status(resp)
 
 
 def chat(
@@ -66,9 +96,7 @@ def chat(
                 "session_id": session_id,
             },
         )
-    if resp.status_code >= 400:
-        raise RuntimeError(resp.json().get("detail", resp.text))
-    return resp.json()
+    return _response_json(resp)
 
 
 def chat_stream(
@@ -95,8 +123,7 @@ def chat_stream(
                 "session_id": session_id,
             },
         ) as resp:
-            if resp.status_code >= 400:
-                raise RuntimeError(resp.json().get("detail", resp.text))
+            _raise_for_status(resp)
             for line in resp.iter_lines():
                 if not line or not line.startswith("data:"):
                     continue
@@ -114,32 +141,25 @@ def chat_stream(
 def list_chat_sessions() -> list[dict]:
     with _client() as client:
         resp = client.get("/chat/sessions")
-    if resp.status_code >= 400:
-        raise RuntimeError(resp.json().get("detail", resp.text))
-    return resp.json()
+    return _response_json(resp)
 
 
 def create_chat_session(course_id: int | None = None) -> dict:
     with _client() as client:
         resp = client.post("/chat/sessions", json={"course_id": course_id})
-    if resp.status_code >= 400:
-        raise RuntimeError(resp.json().get("detail", resp.text))
-    return resp.json()
+    return _response_json(resp)
 
 
 def delete_chat_session(session_id: int) -> None:
     with _client() as client:
         resp = client.delete(f"/chat/sessions/{session_id}")
-    if resp.status_code >= 400:
-        raise RuntimeError(resp.json().get("detail", resp.text))
+    _raise_for_status(resp)
 
 
 def list_chat_messages(session_id: int) -> list[dict]:
     with _client() as client:
         resp = client.get(f"/chat/sessions/{session_id}/messages")
-    if resp.status_code >= 400:
-        raise RuntimeError(resp.json().get("detail", resp.text))
-    return resp.json()
+    return _response_json(resp)
 
 
 def generate_questions(
@@ -155,20 +175,16 @@ def generate_questions(
                 "qtype": qtype,
             },
         )
-    if resp.status_code >= 400:
-        raise RuntimeError(resp.json().get("detail", resp.text))
-    return resp.json()
+    return _response_json(resp)
 
 
 def grade(question_id: int, user_answer: str) -> dict:
     with _client() as client:
         resp = client.post(
             f"/questions/{question_id}/grade",
-            json={"question_id": question_id, "user_answer": user_answer},
+            json={"user_answer": user_answer},
         )
-    if resp.status_code >= 400:
-        raise RuntimeError(resp.json().get("detail", resp.text))
-    return resp.json()
+    return _response_json(resp)
 
 
 def mistake_stats(
@@ -185,6 +201,4 @@ def mistake_stats(
         params["topic"] = topic
     with _client() as client:
         resp = client.get("/stats/mistakes", params=params)
-    if resp.status_code >= 400:
-        raise RuntimeError(resp.json().get("detail", resp.text))
-    return resp.json()
+    return _response_json(resp)

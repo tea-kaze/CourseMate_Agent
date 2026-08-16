@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from langchain_core.messages import AIMessageChunk
+import pytest
 
 from coursemate.app import chat_service
 from coursemate.db import chat_repo
+from coursemate.db import repo
 
 
 def _agent(answer: str = "答案是A"):
@@ -17,10 +19,11 @@ def _agent(answer: str = "答案是A"):
 
 
 def test_run_chat_creates_session_and_saves_messages(fresh_db):
+    course = repo.get_or_create_course(fresh_db, "操作系统")
     result = chat_service.run_chat(
         fresh_db,
         message="什么是进程调度？",
-        course_id=2,
+        course_id=course.id,
         session_id=None,
         history=[],
         agent=_agent(),
@@ -35,7 +38,8 @@ def test_run_chat_creates_session_and_saves_messages(fresh_db):
 
 
 def test_run_chat_appends_to_existing_session_and_ignores_history(fresh_db):
-    s = chat_repo.create_chat_session(fresh_db, course_id=2)
+    course = repo.get_or_create_course(fresh_db, "操作系统")
+    s = chat_repo.create_chat_session(fresh_db, course_id=course.id)
     chat_repo.add_chat_message(fresh_db, s.id, "user", "旧问题")
     chat_repo.add_chat_message(fresh_db, s.id, "assistant", "旧回答")
 
@@ -51,7 +55,7 @@ def test_run_chat_appends_to_existing_session_and_ignores_history(fresh_db):
     result = chat_service.run_chat(
         fresh_db,
         message="继续",
-        course_id=2,
+        course_id=course.id,
         session_id=s.id,
         history=[{"role": "user", "content": "不应使用"}],
         agent=FakeAgent(),
@@ -120,11 +124,12 @@ def _stream_agent(chunks):
 
 
 def test_run_chat_stream_yields_tokens_and_saves_messages(fresh_db):
+    course = repo.get_or_create_course(fresh_db, "操作系统")
     events = list(
         chat_service.run_chat_stream(
             fresh_db,
             message="什么是进程调度？",
-            course_id=2,
+            course_id=course.id,
             session_id=None,
             history=[],
             agent=_stream_agent(
@@ -143,6 +148,55 @@ def test_run_chat_stream_yields_tokens_and_saves_messages(fresh_db):
     msgs = chat_repo.list_chat_messages(fresh_db, sid)
     assert [m.role for m in msgs] == ["user", "assistant"]
     assert msgs[1].content == "你好，同学"
+
+
+def test_run_chat_rejects_course_change_for_existing_session(fresh_db):
+    course_a = repo.get_or_create_course(fresh_db, "操作系统")
+    course_b = repo.get_or_create_course(fresh_db, "数据库")
+    session = chat_repo.create_chat_session(fresh_db, course_id=course_a.id)
+
+    with pytest.raises(chat_service.SessionCourseConflict):
+        chat_service.run_chat(
+            fresh_db,
+            message="问题",
+            course_id=course_b.id,
+            session_id=session.id,
+            agent=_agent(),
+        )
+
+
+def test_run_chat_uses_bound_course_and_keeps_user_message_raw(
+    fresh_db, monkeypatch
+):
+    course = repo.get_or_create_course(fresh_db, "操作系统")
+    session = chat_repo.create_chat_session(fresh_db, course_id=course.id)
+    built_with: list[int | None] = []
+
+    class FakeAgent:
+        def invoke(self, state, config=None):
+            assert state["messages"][-1]["content"] == "什么是调度？"
+            assert config["metadata"]["course_id"] == course.id
+            state["messages"].append(
+                type("M", (), {"role": "assistant", "content": "回答"})()
+            )
+            return state
+
+    from coursemate.agent import agent as agent_module
+
+    monkeypatch.setattr(
+        agent_module,
+        "build_agent",
+        lambda course_id=None: built_with.append(course_id) or FakeAgent(),
+    )
+
+    chat_service.run_chat(
+        fresh_db,
+        message="什么是调度？",
+        course_id=None,
+        session_id=session.id,
+    )
+
+    assert built_with == [course.id]
 
 
 def test_run_chat_stream_skips_tool_call_chunks(fresh_db):

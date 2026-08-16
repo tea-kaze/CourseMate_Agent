@@ -37,3 +37,9 @@ def test_delete_by_document_raises_when_no_vectors_deleted():
     vs = _FakeVS(result=False)
     with pytest.raises(RuntimeError):
         vs_module.delete_by_document(vs, 7)
+
+
+def test_delete_by_document_allows_missing_vectors_for_retry():
+    vs = _FakeVS(result=False)
+    vs_module.delete_by_document(vs, 7, missing_ok=True)
+    assert vs.expr == "document_id == 7"

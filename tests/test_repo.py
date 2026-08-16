@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 from coursemate.db import repo
+from coursemate.db.models import utcnow
 
 
 def test_get_or_create_course(fresh_db):
     course = repo.get_or_create_course(fresh_db, "操作系统")
     same = repo.get_or_create_course(fresh_db, "操作系统")
     assert course.id == same.id
-    assert len(repo.list_courses(fresh_db)) == 1
+    assert len(repo.list_all_courses(fresh_db)) == 1
+    assert repo.list_courses(fresh_db) == []
 
 
 def test_document_crud(fresh_db):
@@ -15,7 +19,15 @@ def test_document_crud(fresh_db):
     doc = repo.create_document(
         fresh_db, course.id, "ch1.md", "/tmp/ch1.md", "md", 12
     )
+    assert doc.status == "pending"
     assert repo.get_document(fresh_db, doc.id).filename == "ch1.md"
+    assert repo.list_documents(fresh_db) == []
+    repo.update_document_status(
+        fresh_db,
+        doc,
+        "ready",
+        chunk_count=12,
+    )
     assert repo.get_course_index(fresh_db)[0]["document_count"] == 1
     repo.delete_document(fresh_db, doc)
     assert repo.list_documents(fresh_db) == []
@@ -25,11 +37,80 @@ def test_get_course_index_excludes_empty_courses(fresh_db):
     """空课程（无文档）不应出现在课程索引，避免课程范围下拉框出现空选项。"""
     repo.get_or_create_course(fresh_db, "空课程")
     course = repo.get_or_create_course(fresh_db, "有文档课程")
-    repo.create_document(fresh_db, course.id, "ch1.md", "/tmp/ch1.md", "md", 3)
+    doc = repo.create_document(
+        fresh_db, course.id, "ch1.md", "/tmp/ch1.md", "md", 3
+    )
+    repo.update_document_status(fresh_db, doc, "ready")
 
     index = repo.get_course_index(fresh_db)
     names = [c["course_name"] for c in index]
     assert names == ["有文档课程"]
+
+
+def test_document_queries_expose_only_ready_documents(fresh_db):
+    course = repo.get_or_create_course(fresh_db, "状态过滤")
+    pending = repo.create_document(
+        fresh_db, course.id, "pending.md", "/tmp/pending.md", "md", 0
+    )
+    failed = repo.create_document(
+        fresh_db, course.id, "failed.md", "/tmp/failed.md", "md", 0
+    )
+    ready = repo.create_document(
+        fresh_db, course.id, "ready.md", "/tmp/ready.md", "md", 2
+    )
+    repo.update_document_status(
+        fresh_db, failed, "ingest_failed", last_error="embedding failed"
+    )
+    repo.update_document_status(fresh_db, ready, "ready")
+
+    assert [doc.id for doc in repo.list_documents(fresh_db)] == [ready.id]
+    assert [course.id for course in repo.list_courses(fresh_db)] == [course.id]
+    assert repo.get_course_index(fresh_db) == [
+        {
+            "course_id": course.id,
+            "course_name": "状态过滤",
+            "document_count": 1,
+            "documents": ["ready.md"],
+        }
+    ]
+    assert {doc.id for doc in repo.list_all_documents(fresh_db)} == {
+        pending.id,
+        failed.id,
+        ready.id,
+    }
+
+
+def test_list_stale_ingestions_excludes_recent_and_ready_documents(fresh_db):
+    course = repo.get_or_create_course(fresh_db, "失败清理")
+    stale_pending = repo.create_document(
+        fresh_db, course.id, "stale-pending.md", "/tmp/a", "md", 0
+    )
+    stale_failed = repo.create_document(
+        fresh_db, course.id, "stale-failed.md", "/tmp/b", "md", 0
+    )
+    recent_failed = repo.create_document(
+        fresh_db, course.id, "recent-failed.md", "/tmp/c", "md", 0
+    )
+    ready = repo.create_document(
+        fresh_db, course.id, "ready.md", "/tmp/d", "md", 1
+    )
+    repo.update_document_status(
+        fresh_db, stale_failed, "ingest_failed", last_error="failed"
+    )
+    repo.update_document_status(
+        fresh_db, recent_failed, "ingest_failed", last_error="failed"
+    )
+    repo.update_document_status(fresh_db, ready, "ready")
+    old = utcnow() - timedelta(hours=25)
+    stale_pending.created_at = old
+    stale_failed.created_at = old
+    fresh_db.flush()
+
+    stale = repo.list_stale_ingestions(
+        fresh_db, before=utcnow() - timedelta(hours=24)
+    )
+
+    assert {doc.id for doc in stale} == {stale_pending.id, stale_failed.id}
 
 
 def test_question_and_attempt_flow(fresh_db):

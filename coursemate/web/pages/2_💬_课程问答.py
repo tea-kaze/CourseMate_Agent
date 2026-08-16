@@ -21,8 +21,8 @@ if not courses:
     st.stop()
 
 course_opts = {f"{c['name']}（#{c['id']}）": c["id"] for c in courses}
-selected = st.sidebar.selectbox("课程范围（可选）", ["全部课程", *course_opts])
-course_id = course_opts.get(selected)
+selected = st.sidebar.selectbox("新会话课程范围", ["全部课程", *course_opts])
+new_session_course_id = course_opts.get(selected)
 
 sessions = list_chat_sessions()
 
@@ -33,7 +33,7 @@ if st.session_state.get("qa_session_id") is None and sessions:
 with st.sidebar:
     st.subheader("会话")
     if st.button("＋ 新建会话", key="new_session", use_container_width=True):
-        created = create_chat_session(course_id=course_id)
+        created = create_chat_session(course_id=new_session_course_id)
         st.session_state.qa_session_id = created["id"]
         st.rerun()
     for s in sessions:
@@ -57,6 +57,9 @@ if session_id is None:
     st.info("点击左侧「＋ 新建会话」开始提问。")
     st.stop()
 
+active_session = next((s for s in sessions if s["id"] == session_id), None)
+active_course_id = active_session["course_id"] if active_session else None
+
 messages = list_chat_messages(session_id)
 for m in messages:
     with st.chat_message(m["role"]):
@@ -69,7 +72,11 @@ if prompt:
     with st.chat_message("assistant"):
         try:
             st.write_stream(
-                chat_stream(prompt, course_id=course_id, session_id=session_id)
+                chat_stream(
+                    prompt,
+                    course_id=active_course_id,
+                    session_id=session_id,
+                )
             )
             # 重新从 API 读取完整消息，保证与会话一致
             st.rerun()

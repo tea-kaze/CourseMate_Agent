@@ -18,7 +18,7 @@ SESSIONS = [
     {
         "id": 1,
         "title": "什么是进程调度？",
-        "course_id": None,
+        "course_id": 2,
         "message_count": 2,
         "created_at": "2026-08-14T00:00:00",
         "updated_at": "2026-08-14T00:00:00",
@@ -106,4 +106,4 @@ def test_delete_current_session(page):
 def test_send_message_calls_chat_with_session_id(page):
     at, calls = page
     at.chat_input[0].set_value("什么是死锁？").run()
-    assert calls["chat"] == [("什么是死锁？", None, 1)]
+    assert calls["chat"] == [("什么是死锁？", 2, 1)]

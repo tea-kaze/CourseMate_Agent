@@ -12,8 +12,22 @@ from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from coursemate.agent.service import get_service
-from coursemate.app.ingestion import IngestionError, delete_document_file, ingest_file
-from coursemate.app.chat_service import SessionNotFound, run_chat, run_chat_stream
+from coursemate.app.ingestion import (
+    DocumentDeletionError,
+    DocumentNotFoundError,
+    DocumentStateError,
+    IngestionError,
+    delete_document_consistently,
+    delete_document_file,
+    ingest_file,
+)
+from coursemate.app.chat_service import (
+    CourseNotFound,
+    SessionCourseConflict,
+    SessionNotFound,
+    run_chat,
+    run_chat_stream,
+)
 from coursemate.app.schemas import (
     ChatMessageOut,
     ChatRequest,
@@ -22,8 +36,9 @@ from coursemate.app.schemas import (
     CreateChatSessionRequest,
     DocumentOut,
     GenerateQuestionsRequest,
+    GradeOut,
     GradeRequest,
-    QuestionOut,
+    QuestionPublicOut,
 )
 from coursemate.config import get_settings
 from coursemate.db import chat_repo
@@ -88,16 +103,14 @@ def _to_document_out(doc) -> DocumentOut:
     )
 
 
-def _to_question_out(q) -> QuestionOut:
-    return QuestionOut(
+def _to_question_out(q) -> QuestionPublicOut:
+    return QuestionPublicOut(
         id=q.id,
         course_id=q.course_id,
         qtype=q.qtype,
         topic=q.topic,
         stem=q.stem,
         options=q.options or [],
-        answer=q.answer,
-        explanation=q.explanation,
     )
 
 
@@ -143,13 +156,21 @@ async def upload_document(
 
 @app.delete("/documents/{document_id}")
 def delete_doc(document_id: int):
-    with get_session() as session:
-        doc = get_document(session, document_id)
-        if doc is None:
-            raise HTTPException(status_code=404, detail="文档不存在")
-        delete_document_file(document_id, doc.file_path)
-        delete_document(session, doc)
-        session.commit()
+    try:
+        delete_document_consistently(
+            document_id,
+            resource_deleter=delete_document_file,
+        )
+    except DocumentNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except DocumentStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except DocumentDeletionError as exc:
+        logger.exception("删除文档失败 document_id={}", document_id)
+        raise HTTPException(
+            status_code=503,
+            detail="文档资源删除失败，已保留记录，可稍后重试。",
+        ) from exc
     return {"deleted": document_id}
 
 
@@ -169,6 +190,10 @@ def chat(req: ChatRequest):
         return result
     except SessionNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except CourseNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except SessionCourseConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         logger.exception("chat 调用失败")
         raise HTTPException(status_code=500, detail=f"对话失败：{exc}") from exc
@@ -186,8 +211,20 @@ def chat_stream(req: ChatRequest):
     """
     if req.session_id is not None:
         with get_session() as session:
-            if chat_repo.get_chat_session(session, req.session_id) is None:
+            chat_session = chat_repo.get_chat_session(session, req.session_id)
+            if chat_session is None:
                 raise HTTPException(status_code=404, detail="会话不存在")
+            if (
+                req.course_id is not None
+                and req.course_id != chat_session.course_id
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail="会话课程范围与请求不一致，请新建会话后切换课程",
+                )
+    elif req.course_id is not None:
+        with get_session() as session:
+            _get_course_or_404(session, req.course_id)
 
     def event_stream():
         with get_session() as session:
@@ -232,6 +269,8 @@ def chat_sessions():
 def create_chat_session(req: CreateChatSessionRequest):
     """新建会话（可绑定课程范围）。"""
     with get_session() as session:
+        if req.course_id is not None:
+            _get_course_or_404(session, req.course_id)
         s = chat_repo.create_chat_session(session, course_id=req.course_id)
         session.commit()
         return _chat_session_out(
@@ -271,7 +310,7 @@ def chat_messages(session_id: int):
         ]
 
 
-@app.post("/questions/generate", response_model=list[QuestionOut])
+@app.post("/questions/generate", response_model=list[QuestionPublicOut])
 def generate(req: GenerateQuestionsRequest):
     """自动出题：调用 Agent 服务生成题目 → 持久化 → 返回带 ID 的题目列表。"""
     with get_session() as session:
@@ -294,7 +333,7 @@ def generate(req: GenerateQuestionsRequest):
         return [_to_question_out(q) for q in questions if q is not None]
 
 
-@app.post("/questions/{question_id}/grade", response_model=dict)
+@app.post("/questions/{question_id}/grade", response_model=GradeOut)
 def grade(question_id: int, req: GradeRequest):
     """批改作答：用题目相关上下文 + 参考答案做结构化批改，并记录作答。"""
     with get_session() as session:
@@ -325,6 +364,7 @@ def grade(question_id: int, req: GradeRequest):
         "feedback": result.feedback,
         "knowledge_point": result.knowledge_point,
         "correct_answer": question.answer,
+        "explanation": question.explanation,
     }
 
 

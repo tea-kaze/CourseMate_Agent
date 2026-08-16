@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
-from sqlalchemy import func, select
-from sqlalchemy.orm import Session, joinedload
+from datetime import datetime
 
-from coursemate.db.models import AnswerAttempt, Course, Document, Question
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session, joinedload, selectinload
+
+from coursemate.db.models import (
+    AnswerAttempt,
+    Course,
+    Document,
+    DocumentStatus,
+    Question,
+)
 
 
 # ---------- Course ----------
@@ -19,6 +27,22 @@ def get_or_create_course(session: Session, name: str, description: str = "") -> 
 
 
 def list_courses(session: Session) -> list[Course]:
+    """只列出至少有一个可检索文档的课程，并只预加载 ready 文档。"""
+    query = (
+        select(Course)
+        .where(Course.documents.any(Document.status == DocumentStatus.READY))
+        .options(
+            selectinload(
+                Course.documents.and_(Document.status == DocumentStatus.READY)
+            )
+        )
+        .order_by(Course.id)
+    )
+    return list(session.scalars(query))
+
+
+def list_all_courses(session: Session) -> list[Course]:
+    """列出所有课程，供清理和后台管理流程使用。"""
     return list(session.scalars(select(Course).order_by(Course.id)))
 
 
@@ -36,7 +60,12 @@ def get_course_index(session: Session) -> list[dict]:
     result: list[dict] = []
     for course in list_courses(session):
         docs = session.scalars(
-            select(Document).where(Document.course_id == course.id)
+            select(Document)
+            .where(
+                Document.course_id == course.id,
+                Document.status == DocumentStatus.READY,
+            )
+            .order_by(Document.id)
         ).all()
         if not docs:
             continue
@@ -59,6 +88,7 @@ def create_document(
     file_path: str,
     doc_type: str,
     chunk_count: int,
+    status: DocumentStatus | str = DocumentStatus.PENDING,
 ) -> Document:
     doc = Document(
         course_id=course_id,
@@ -66,6 +96,7 @@ def create_document(
         file_path=file_path,
         doc_type=doc_type,
         chunk_count=chunk_count,
+        status=DocumentStatus(status),
     )
     session.add(doc)
     session.flush()
@@ -76,8 +107,53 @@ def list_documents(session: Session) -> list[Document]:
     return list(
         session.scalars(
             select(Document)
+            .where(Document.status == DocumentStatus.READY)
             .options(joinedload(Document.course))
             .order_by(Document.id.desc())
+        )
+    )
+
+
+def list_all_documents(session: Session) -> list[Document]:
+    """列出所有状态的文档，供补偿和清理流程使用。"""
+    return list(
+        session.scalars(
+            select(Document)
+            .options(joinedload(Document.course))
+            .order_by(Document.id.desc())
+        )
+    )
+
+
+def update_document_status(
+    session: Session,
+    document: Document,
+    status: DocumentStatus | str,
+    *,
+    chunk_count: int | None = None,
+    last_error: str | None = None,
+) -> Document:
+    document.status = DocumentStatus(status)
+    document.last_error = last_error
+    if chunk_count is not None:
+        document.chunk_count = chunk_count
+    session.flush()
+    return document
+
+
+def list_stale_ingestions(session: Session, *, before: datetime) -> list[Document]:
+    """列出超过截止时间仍未完成或入库失败的文档。"""
+    return list(
+        session.scalars(
+            select(Document)
+            .where(
+                Document.status.in_(
+                    [DocumentStatus.PENDING, DocumentStatus.INGEST_FAILED]
+                ),
+                Document.created_at < before,
+            )
+            .options(joinedload(Document.course))
+            .order_by(Document.id)
         )
     )
 

@@ -1,7 +1,7 @@
 [project]
 name = "coursemate"
 version = "0.1.0"
-description = "Add your description here"
+description = "Course-material RAG assistant with scoped chat, quiz generation, grading, and mistake review"
 readme = "README.md"
 authors = [
     { name = "tea-kaze", email = "1941610015@qq.com" }
@@ -35,6 +35,7 @@ dependencies = [
     "sqlalchemy>=2.0.52",
     "streamlit>=1.61.1",
     "uvicorn>=0.52.1",
+    "alembic>=1.19.1",
 ]
 
 [project.scripts]

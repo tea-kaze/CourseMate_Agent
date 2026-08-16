@@ -161,7 +161,11 @@ def get_service() -> CourseMateService:
     return CourseMateService()
 
 
-def build_tools(service: CourseMateService | None = None) -> list[Any]:
+def build_tools(
+    service: CourseMateService | None = None,
+    *,
+    course_id: int | None = None,
+) -> list[Any]:
     """构建 Agent 绑定的 4 个工具。
 
     每个工具用 @tool 装饰器定义，带清晰的 description，
@@ -170,7 +174,7 @@ def build_tools(service: CourseMateService | None = None) -> list[Any]:
     svc = service or get_service()
 
     @tool
-    def search_knowledge(query: str, course_id: int | None = None) -> str:
+    def search_knowledge(query: str) -> str:
         """在课程知识库中检索与 query 相关的资料片段，返回带来源引用的文本。"""
         return svc.search_as_text(query, course_id=course_id)
 
@@ -201,4 +205,7 @@ def build_tools(service: CourseMateService | None = None) -> list[Any]:
         """列出已入库的课程、文档数量与文档名，供确认检索范围。"""
         return str(svc.course_index())
 
-    return [search_knowledge, generate_questions, grade_answer, get_course_index]
+    tools = [search_knowledge, generate_questions, grade_answer]
+    if course_id is None:
+        tools.append(get_course_index)
+    return tools

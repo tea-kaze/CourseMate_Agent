@@ -13,6 +13,7 @@ __pycache__/
 data/milvus_lite.db
 data/uploads
 data/coursemate.db
+data/coursemate.db.bak-*
 
 # 编辑器和系统文件
 .idea/
@@ -28,5 +29,4 @@ Thumbs.db
 
 # AI 开发过程产物（superpowers 计划/规格草稿，非正式文档）
 docs/superpowers/
-
 

@@ -57,7 +57,9 @@ def get_vectorstore(collection_name: str | None = None) -> Milvus:
     )
 
 
-def delete_by_document(vectorstore: Milvus, document_id: int) -> None:
+def delete_by_document(
+    vectorstore: Milvus, document_id: int, *, missing_ok: bool = False
+) -> bool:
     """按 document_id 删除该文档对应的全部向量。
 
     document_id 是开启动态字段后的顶层字段，过滤表达式直接写字段名
@@ -67,6 +69,6 @@ def delete_by_document(vectorstore: Milvus, document_id: int) -> None:
     AttributeError，导致向量静默残留（文档删了但还能被检索到）。
     """
     deleted = vectorstore.delete(expr=f"document_id == {document_id}")
-    if not deleted:
+    if not deleted and not missing_ok:
         raise RuntimeError(f"未删除到向量：document_id == {document_id}")
-
+    return bool(deleted)

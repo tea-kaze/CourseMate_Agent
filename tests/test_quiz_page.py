@@ -30,8 +30,6 @@ QUESTIONS = [
         "topic": "进程调度",
         "stem": "时间片轮转属于哪种调度方式？",
         "options": ["A. 抢占式", "B. 非抢占式"],
-        "answer": "A. 抢占式",
-        "explanation": "时间片耗尽后强制切换。",
     },
     {
         "id": 102,
@@ -40,8 +38,6 @@ QUESTIONS = [
         "topic": "进程调度",
         "stem": "以下哪些属于进程调度算法？",
         "options": ["A. FCFS", "B. SJF", "C. 时间片轮转"],
-        "answer": "A. FCFS、B. SJF、C. 时间片轮转",
-        "explanation": "三者均为调度算法。",
     },
 ]
 

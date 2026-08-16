@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from coursemate.web.api_client import delete_document, get_courses, get_documents, upload_document
+from coursemate.web.api_client import delete_document, get_documents, upload_document
 
 
 st.set_page_config(page_title="资料管理", page_icon="📁")
@@ -37,8 +37,11 @@ if submitted:
 
 st.divider()
 st.subheader("已入库文档")
-courses = get_courses()
-docs = get_documents()
+try:
+    docs = get_documents()
+except Exception as exc:  # noqa: BLE001
+    st.error(f"读取文档列表失败：{exc}")
+    st.stop()
 if not docs:
     st.info("还没有文档，先上传一份课程资料吧。")
 else:

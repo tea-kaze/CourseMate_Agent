@@ -1,6 +1,6 @@
 # 📚 CourseMate：课程学习与刷题助手
 
-一个面向「课程资料学习 + 刷题巩固」的单 Agent 多工具 Web 应用。上传课程资料后，可以针对资料提问、自动出题、在线作答并批改，最后通过错题本复盘薄弱知识点。
+一个面向「课程资料学习 + 刷题巩固」的 Web 应用。课程问答使用 LangGraph ReAct Agent 完成检索与回答；自动出题和批改使用固定编排的 RAG + 结构化 LLM 工作流，最后通过错题本复盘薄弱知识点。
 
 ## 功能闭环
 
@@ -18,7 +18,7 @@ flowchart LR
 
 四大功能：
 
-1. **资料管理**：上传 PDF / Markdown / TXT / Word（.docx），自动解析、切分、向量化入库；支持删除。
+1. **资料管理**：上传 PDF / Markdown / TXT / Word（.docx），自动解析、切分、向量化入库；入库和删除使用状态机记录中间状态及失败原因，失败删除可以重试。
 2. **课程问答**：Agent 检索课程资料后回答，回答带来源引用；支持多会话管理
    （新建/切换/删除，SQLite 持久化，重启后记录不丢）；回答流式输出（SSE 逐 token）；
    长对话自动上下文压缩（增量摘要 + 最近消息窗口），控制 token 成本并保持连贯；
@@ -29,7 +29,8 @@ flowchart LR
 ## 技术栈与架构
 
 - **语言/工程**：Python 3.12、uv 项目管理
-- **Agent 框架**：LangChain 1.x + LangGraph（ReAct 单 Agent，绑定 4 个工具）
+- **问答 Agent**：LangChain 1.x + LangGraph（ReAct Agent，课程范围由服务端固定）
+- **刷题工作流**：RAG 检索 + Pydantic 结构化 LLM 输出（固定步骤，不由 Agent 自主选路）
 - **模型**：DeepSeek（主模型）、硅基流动 bge-m3（Embedding API）
 - **RAG**：LangChain Loader + RecursiveCharacterTextSplitter + Milvus 向量库
 - **后端**：FastAPI（REST API，Swagger 文档）
@@ -47,17 +48,22 @@ flowchart TB
     subgraph Backend[FastAPI]
         API[文档/问答/出题/批改/统计接口]
     end
-    subgraph Agent[LangGraph Agent]
-        T1[search_knowledge] & T2[generate_questions] & T3[grade_answer] & T4[get_course_index]
+    subgraph Chat[检索问答]
+        AGENT[LangGraph ReAct Agent] --> SEARCH[课程范围检索]
+    end
+    subgraph Quiz[出题与批改]
+        GEN[RAG 出题工作流] & GRADE[结构化批改工作流]
     end
     subgraph Storage[存储层]
         MILVUS[(Milvus 向量库)]
         DB[(SQLite / PostgreSQL)]
     end
-    Frontend --> API --> Agent
-    Agent --> T1 & T2 & T3 & T4
-    T1 --> MILVUS
+    Frontend --> API
+    API --> Chat & Quiz
+    SEARCH --> MILVUS
+    GEN --> MILVUS
     API --> DB
+    Quiz --> DB
 ```
 
 ## 快速开始
@@ -84,7 +90,17 @@ cp .env.example .env
 # （可选）LANGSMITH_API_KEY + LANGSMITH_TRACING=true，开启 LangSmith 可观测性
 ```
 
-### 4. 启动（二选一）
+### 4. 升级数据库
+
+首次启动和拉取包含数据库结构变更的版本后，都先执行。使用 PostgreSQL 时，应先配置目标 `DATABASE_URL`，再对该数据库执行迁移：
+
+```bash
+uv run alembic upgrade head
+```
+
+该命令既能初始化空数据库，也会把旧数据库中的已有文档迁移为 `ready` 状态。
+
+### 5. 启动（二选一）
 
 **方式 A：Milvus Lite（零 Docker，适合快速体验）**
 
@@ -100,7 +116,7 @@ uv run streamlit run coursemate/web/app.py
 
 打开 http://localhost:8501 使用。
 
-**方式 B：Docker 版 Milvus + PostgreSQL（生产接近）**
+**方式 B：Docker 版 Milvus + PostgreSQL（完整服务组合）**
 
 ```bash
 # 1. 启动 Milvus 全家桶
@@ -110,10 +126,13 @@ docker compose up -d
 # MILVUS_URI=http://localhost:19530
 # DATABASE_URL=postgresql+psycopg://postgres:密码@数据库地址:5432/coursemate
 
-# 3. 启动后端与 Web（同上）
+# 3. 在 PostgreSQL 上执行迁移
+uv run alembic upgrade head
+
+# 4. 启动后端与 Web（同上）
 ```
 
-### 5. 导入演示资料（可选）
+### 6. 导入演示资料（可选）
 
 ```bash
 uv run python scripts/seed_demo.py
@@ -135,6 +154,7 @@ uv run python scripts/seed_demo.py
 │   ├── evaluation.py      # RAG 检索/忠实度评估逻辑
 │   └── web/               # Streamlit 前端（4 个页面）
 ├── docs/                  # 设计文档（含课程问答会话管理设计）
+├── migrations/            # Alembic 数据库迁移脚本
 ├── scripts/
 │   ├── seed_demo.py       # 导入演示资料
 │   ├── demo_e2e.py        # 端到端功能验证脚本
@@ -155,19 +175,19 @@ uv run python scripts/seed_demo.py
 
 | 方法 | 路径 | 说明 |
 | ---- | ---- | ---- |
-| GET | `/courses` | 课程列表（仅有文档的课程） |
+| GET | `/courses` | 课程列表（只统计 `ready` 文档） |
 | POST | `/courses` | 创建课程 |
-| GET | `/documents` | 文档列表 |
+| GET | `/documents` | 文档列表（只返回 `ready` 文档） |
 | POST | `/documents` | 上传文档入库（multipart：file + course_name） |
-| DELETE | `/documents/{id}` | 删除文档（含向量） |
-| POST | `/chat` | Agent 对话（支持多轮 history 与 session_id；长对话自动上下文压缩） |
-| POST | `/chat/stream` | Agent 流式对话（SSE 逐 token 返回） |
+| DELETE | `/documents/{id}` | 删除文档（含向量与原文；资源失败返回 503，可重试） |
+| POST | `/chat` | Agent 对话（会话课程范围固定；长对话自动上下文压缩） |
+| POST | `/chat/stream` | Agent 流式对话（固定课程范围，SSE 逐 token 返回） |
 | GET | `/chat/sessions` | 会话列表（按最后活动时间倒序） |
-| POST | `/chat/sessions` | 新建会话（可绑定课程范围） |
+| POST | `/chat/sessions` | 新建会话（课程范围创建后不可修改） |
 | GET | `/chat/sessions/{id}/messages` | 读取某会话的全部消息 |
 | DELETE | `/chat/sessions/{id}` | 删除会话（级联删除消息） |
-| POST | `/questions/generate` | 自动出题 |
-| POST | `/questions/{id}/grade` | 批改作答 |
+| POST | `/questions/generate` | 自动出题（响应不含答案与解析） |
+| POST | `/questions/{id}/grade` | 批改作答（成功后返回答案与解析） |
 | GET | `/stats/mistakes` | 错题统计（可按课程、题型、知识点过滤） |
 | GET | `/health` | 健康检查 |
 
@@ -177,10 +197,10 @@ uv run python scripts/seed_demo.py
 uv run pytest -q
 ```
 
-覆盖：文档加载与切分（含 .docx 解析）、空 PDF/空 Word 报错、课程/文档/题目/
+当前共有 22 个测试文件、97 项自动化测试。覆盖：文档加载与切分（含 .docx 解析）、空 PDF/空 Word 报错、课程/文档/题目/
 作答的仓库逻辑、错题统计与题型/知识点筛选、会话与消息持久化、上下文压缩
-（增量摘要/失败降级）、出题与批改的 Schema 校验，以及问答/刷题/错题本页面的
-Streamlit AppTest 交互测试。
+（增量摘要/失败降级）、入库/删除补偿与迁移、课程隔离、出题与批改的公开接口契约，
+以及问答/刷题/错题本页面的 Streamlit AppTest 交互测试。
 
 ## RAG 评估
 
@@ -200,7 +220,9 @@ uv run python scripts/eval_rag.py --faithfulness
 
 ## 技术选型理由
 
-- **单 Agent 多工具**：检索、出题、批改、索引四个能力由同一 Agent 编排，结构清晰、易调试，适合一周内交付。
+- **问答与刷题分开编排**：课程问答使用 LangGraph ReAct Agent 决定何时检索；出题和批改由 API 直接执行固定的 RAG + 结构化 LLM 步骤，接口行为更容易约束和测试。
+- **服务端课程隔离**：会话创建后以 `ChatSession.course_id` 为唯一课程范围，检索工具不接收模型提供的课程 ID，避免提示词或模型工具参数绕过范围。
+- **可补偿的文档状态机**：只有 `ready` 文档对列表和检索可见；入库或删除失败保留失败状态，清理脚本与删除接口可继续补偿。
 - **Milvus + SQLite/PostgreSQL 分离**：向量检索与业务数据解耦；本地零依赖可跑（Milvus Lite），需要时可无缝切换 Docker 版 Milvus。
 - **DeepSeek + 硅基流动**：中文效果好、成本低；Embedding 用 API 避免本地模型安装负担。
 - **FastAPI + Streamlit**：后端接口标准、可测试、自带 Swagger；前端四页面按功能组织，演示直观。
@@ -211,4 +233,4 @@ uv run python scripts/eval_rag.py --faithfulness
 - 错题本提供统计与列表，未做个性化推荐。
 - PDF 仅支持带文本层的文件，扫描件需先 OCR（可接入 MinerU）。
 - Word 上传仅支持 .docx，旧版 .doc 请先另存为 .docx 后上传。
-- 后续可扩展：多 Agent 编排（检索/出题/批改子 Agent）、会话重命名与消息编辑、学习报告生成。
+- 后续可扩展：会话重命名与消息编辑、学习报告生成、登录与多租户隔离。

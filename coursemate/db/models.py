@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from enum import StrEnum
 
 from sqlalchemy import (
     JSON,
@@ -23,6 +24,14 @@ def utcnow() -> datetime:
 
 class Base(DeclarativeBase):
     pass
+
+
+class DocumentStatus(StrEnum):
+    PENDING = "pending"
+    READY = "ready"
+    INGEST_FAILED = "ingest_failed"
+    DELETING = "deleting"
+    DELETE_FAILED = "delete_failed"
 
 
 class Course(Base):
@@ -57,6 +66,10 @@ class Document(Base):
     file_path: Mapped[str] = mapped_column(String(500))
     doc_type: Mapped[str] = mapped_column(String(20))
     chunk_count: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(
+        String(20), default=DocumentStatus.PENDING, index=True
+    )
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     course: Mapped[Course] = relationship(back_populates="documents")

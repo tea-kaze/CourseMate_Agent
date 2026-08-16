@@ -8,14 +8,41 @@ from uuid import uuid4
 from loguru import logger
 
 from coursemate.config import get_settings
-from coursemate.db.repo import create_document, get_or_create_course
+from coursemate.db.models import DocumentStatus
+from coursemate.db.repo import (
+    create_document,
+    delete_document,
+    get_document,
+    get_or_create_course,
+    update_document_status,
+)
 from coursemate.db.session import get_session, init_db
 from coursemate.rag.loader import DocumentParseError, load_document, split_documents
-from coursemate.rag.vectorstore import get_vectorstore
+from coursemate.rag.vectorstore import delete_by_document, get_vectorstore
 
 
 class IngestionError(Exception):
     pass
+
+
+class DocumentNotFoundError(Exception):
+    pass
+
+
+class DocumentStateError(Exception):
+    pass
+
+
+class DocumentDeletionError(Exception):
+    pass
+
+
+def _safe_unlink(path: Path, *, operation: str) -> None:
+    """尽力清理文件，但不让清理异常掩盖原始业务错误。"""
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:  # 文件锁定、权限或磁盘错误由日志保留，状态补偿继续执行
+        logger.exception("{}清理文件失败 path={}", operation, path)
 
 
 def validate_suffix(filename: str) -> str:
@@ -46,13 +73,12 @@ def ingest_file(filename: str, content: bytes, course_name: str) -> dict:
     upload_dir.mkdir(parents=True, exist_ok=True)
     stored_name = f"{uuid4().hex}{suffix}"
     dest = upload_dir / stored_name
-    dest.write_bytes(content)
 
+    document_id: int | None = None
+    course_id: int | None = None
+    vectorstore = None
     try:
-        raw_docs = load_document(dest)
-        chunks = split_documents(raw_docs)
-        if not chunks:
-            raise IngestionError("文档切分后没有内容片段，无法入库。")
+        dest.write_bytes(content)
 
         with get_session() as session:
             course = get_or_create_course(session, course_name)
@@ -62,11 +88,17 @@ def ingest_file(filename: str, content: bytes, course_name: str) -> dict:
                 filename=filename,
                 file_path=str(dest),
                 doc_type=suffix.lstrip("."),
-                chunk_count=len(chunks),
+                chunk_count=0,
+                status=DocumentStatus.PENDING,
             )
-            session.commit()
-            course_id = course.id
             document_id = doc.id
+            course_id = course.id
+            session.commit()
+
+        raw_docs = load_document(dest)
+        chunks = split_documents(raw_docs)
+        if not chunks:
+            raise IngestionError("文档切分后没有内容片段，无法入库。")
 
         vectorstore = get_vectorstore()
         for chunk in chunks:
@@ -79,6 +111,18 @@ def ingest_file(filename: str, content: bytes, course_name: str) -> dict:
                 }
             )
         vectorstore.add_documents(chunks)
+
+        with get_session() as session:
+            doc = get_document(session, document_id)
+            if doc is None:
+                raise IngestionError(f"文档元数据不存在：{document_id}")
+            update_document_status(
+                session,
+                doc,
+                DocumentStatus.READY,
+                chunk_count=len(chunks),
+            )
+            session.commit()
 
         logger.info(
             "文档入库成功 course={} doc={} chunks={}",
@@ -93,13 +137,34 @@ def ingest_file(filename: str, content: bytes, course_name: str) -> dict:
             "course_id": course_id,
             "course_name": course_name,
         }
-    except DocumentParseError as exc:
-        dest.unlink(missing_ok=True)
-        raise IngestionError(str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
-        dest.unlink(missing_ok=True)
+        if vectorstore is not None and document_id is not None:
+            try:
+                delete_by_document(vectorstore, document_id, missing_ok=True)
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "入库补偿删除向量失败 document_id={}", document_id
+                )
+        _safe_unlink(dest, operation="入库补偿")
+        if document_id is not None:
+            try:
+                with get_session() as session:
+                    doc = get_document(session, document_id)
+                    if doc is not None:
+                        update_document_status(
+                            session,
+                            doc,
+                            DocumentStatus.INGEST_FAILED,
+                            last_error=str(exc),
+                        )
+                        session.commit()
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "记录入库失败状态时发生异常 document_id={}", document_id
+                )
         logger.exception("文档入库失败: {}", filename)
-        raise IngestionError(f"文档入库失败：{exc}") from exc
+        message = str(exc) if isinstance(exc, DocumentParseError) else f"文档入库失败：{exc}"
+        raise IngestionError(message) from exc
 
 
 def delete_document_file(document_id: int, file_path: str) -> None:
@@ -108,10 +173,58 @@ def delete_document_file(document_id: int, file_path: str) -> None:
     删除必须"向量 + 原文 + 元数据"三处一致，否则会出现
     "文档没了但还能被检索到"的脏数据问题。
     """
-    from coursemate.rag.vectorstore import delete_by_document
-
-    try:
-        delete_by_document(get_vectorstore(), document_id)
-    except Exception:  # noqa: BLE001
-        logger.warning("删除向量失败 document_id={}", document_id)
+    delete_by_document(get_vectorstore(), document_id, missing_ok=True)
     Path(file_path).unlink(missing_ok=True)
+
+
+def delete_document_consistently(
+    document_id: int,
+    *,
+    resource_deleter=None,
+    allow_incomplete: bool = False,
+) -> None:
+    """按 deleting -> 资源删除 -> 元数据删除执行可重试删除。"""
+    with get_session() as session:
+        document = get_document(session, document_id)
+        if document is None:
+            raise DocumentNotFoundError("文档不存在")
+        allowed = {
+            DocumentStatus.READY,
+            DocumentStatus.DELETING,
+            DocumentStatus.DELETE_FAILED,
+        }
+        if allow_incomplete:
+            allowed.update(
+                {DocumentStatus.PENDING, DocumentStatus.INGEST_FAILED}
+            )
+        if document.status not in allowed:
+            raise DocumentStateError(f"文档状态不允许删除：{document.status}")
+        file_path = document.file_path
+        update_document_status(session, document, DocumentStatus.DELETING)
+        session.commit()
+
+    deleter = resource_deleter or delete_document_file
+    try:
+        deleter(document_id, file_path)
+        with get_session() as session:
+            document = get_document(session, document_id)
+            if document is not None:
+                delete_document(session, document)
+                session.commit()
+    except Exception as exc:  # noqa: BLE001
+        try:
+            with get_session() as session:
+                document = get_document(session, document_id)
+                if document is not None:
+                    update_document_status(
+                        session,
+                        document,
+                        DocumentStatus.DELETE_FAILED,
+                        last_error=str(exc),
+                    )
+                    session.commit()
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "记录删除失败状态时发生异常 document_id={}", document_id
+            )
+        raise DocumentDeletionError(str(exc)) from exc

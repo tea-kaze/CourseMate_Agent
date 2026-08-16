@@ -73,7 +73,7 @@ if questions:
                         result.get("user_answer", ""), q["options"]
                     )
                     correct_opts = correct_options(
-                        result.get("correct_answer") or q.get("answer", ""),
+                        result.get("correct_answer", ""),
                         q["options"],
                     )
                     for opt in q["options"]:
@@ -93,17 +93,19 @@ if questions:
                         result.get("user_answer", ""), q["options"]
                     )
                     correct_opts = correct_options(
-                        result.get("correct_answer") or q.get("answer", ""),
+                        result.get("correct_answer", ""),
                         q["options"],
                     )
                     st.markdown(f"**你的答案**：{result.get('user_answer') or '（未作答）'}")
                     st.markdown(
-                        f"**正确答案**：{result.get('correct_answer') or q.get('answer', '')}"
+                        f"**正确答案**：{result.get('correct_answer', '')}"
                     )
                 else:
                     st.markdown(f"**你的答案**：{result.get('user_answer', '')}")
                     st.markdown(f"**正确答案**：{result.get('correct_answer', '')}")
                 st.markdown(f"**反馈**：{result['feedback']}")
+                if result.get("explanation"):
+                    st.markdown(f"**题目解析**：{result['explanation']}")
                 if result.get("knowledge_point"):
                     st.markdown(f"**建议复习**：{result['knowledge_point']}")
                 st.caption("本题已完成作答")
