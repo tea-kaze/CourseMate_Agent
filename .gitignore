@@ -10,7 +10,6 @@ __pycache__/
 .env
 
 # 数据
-data/milvus_lite.db
 data/uploads
 data/coursemate.db
 data/coursemate.db.bak-*
@@ -29,4 +28,3 @@ Thumbs.db
 
 # AI 开发过程产物（superpowers 计划/规格草稿，非正式文档）
 docs/superpowers/
-

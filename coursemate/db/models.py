@@ -22,6 +22,13 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def utc_isoformat(value: datetime) -> str:
+    """Serialize an aware datetime as an explicit UTC ISO 8601 string."""
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("expected a timezone-aware datetime")
+    return value.astimezone(timezone.utc).isoformat()
+
+
 class Base(DeclarativeBase):
     pass
 
@@ -41,7 +48,9 @@ class Course(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(200), unique=True, index=True)
     description: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
 
     documents: Mapped[list["Document"]] = relationship(
         back_populates="course", cascade="all, delete-orphan"
@@ -70,7 +79,9 @@ class Document(Base):
         String(20), default=DocumentStatus.PENDING, index=True
     )
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
 
     course: Mapped[Course] = relationship(back_populates="documents")
 
@@ -93,7 +104,9 @@ class Question(Base):
     options: Mapped[list | None] = mapped_column(JSON, nullable=True)
     answer: Mapped[str] = mapped_column(Text)
     explanation: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
 
     course: Mapped[Course] = relationship(back_populates="questions")
     attempts: Mapped[list["AnswerAttempt"]] = relationship(
@@ -113,7 +126,9 @@ class AnswerAttempt(Base):
     score: Mapped[float] = mapped_column(Float)
     is_correct: Mapped[bool] = mapped_column(Boolean, default=False)
     feedback: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
 
     question: Mapped[Question] = relationship(back_populates="attempts")
 
@@ -128,8 +143,12 @@ class ChatSession(Base):
     )
     title: Mapped[str] = mapped_column(String(200), default="")
     summary: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
 
     messages: Mapped[list["ChatMessage"]] = relationship(
         back_populates="session",
@@ -148,6 +167,8 @@ class ChatMessage(Base):
     )
     role: Mapped[str] = mapped_column(String(20))
     content: Mapped[str] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
 
     session: Mapped[ChatSession] = relationship(back_populates="messages")

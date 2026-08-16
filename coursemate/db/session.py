@@ -1,37 +1,20 @@
-"""数据库会话与建表。"""
+"""数据库会话与 Alembic 迁移状态检查。"""
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session, sessionmaker
 
-from coursemate.config import get_settings
-from coursemate.db.models import Base
+from coursemate.config import get_settings, normalize_database_url
 
 
-def _prepare_sqlite_url(url: str) -> str:
-    """SQLite 相对路径转换为绝对路径。
-
-    uvicorn/Streamlit 的工作目录可能不同，转绝对路径可避免
-    "数据库文件找不到/建到别处"这类经典问题。
-    """
-    if url.startswith("sqlite:///"):
-        raw = url[len("sqlite:///") :]
-        if raw != ":memory:" and not Path(raw).is_absolute():
-            Path(raw).parent.mkdir(parents=True, exist_ok=True)
-            url = f"sqlite:///{Path(raw).resolve()}"
-    return url
+CURRENT_SCHEMA_REVISION = "20260816_0002"
 
 
 def make_engine(url: str | None = None):
-    settings = get_settings()
-    url = url or settings.DATABASE_URL
-    if url.startswith("sqlite"):
-        url = _prepare_sqlite_url(url)
-        return create_engine(url, connect_args={"check_same_thread": False})
-    return create_engine(url, pool_pre_ping=True)
+    database_url = url if url is not None else get_settings().DATABASE_URL
+    database_url = normalize_database_url(database_url)
+    return create_engine(database_url, pool_pre_ping=True)
 
 
 _engine = None
@@ -55,8 +38,24 @@ def get_session_factory() -> sessionmaker[Session]:
 
 
 def init_db() -> None:
-    """建表（幂等）：启动时或入库前调用，保证表结构存在。"""
-    Base.metadata.create_all(bind=get_engine())
+    """检查数据库已由 Alembic 升级到当前版本。
+
+    业务进程不负责隐式建表；部署前应显式执行 ``uv run alembic upgrade head``。
+    """
+    engine = get_engine()
+    with engine.connect() as connection:
+        if not inspect(connection).has_table("alembic_version"):
+            raise RuntimeError(
+                "数据库尚未完成 Alembic 迁移，请先执行：uv run alembic upgrade head"
+            )
+        revisions = set(
+            connection.execute(text("SELECT version_num FROM alembic_version"))
+            .scalars()
+        )
+    if revisions != {CURRENT_SCHEMA_REVISION}:
+        raise RuntimeError(
+            "数据库迁移版本不匹配，请先执行：uv run alembic upgrade head"
+        )
 
 
 def get_session() -> Session:

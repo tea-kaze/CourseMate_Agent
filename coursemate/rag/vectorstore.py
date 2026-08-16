@@ -1,14 +1,9 @@
-"""Milvus 向量存储封装。
-
-支持两种模式：
-- Milvus Lite（默认，本地文件，无需 Docker）
-- Milvus Standalone（MILVUS_URI 设为 http://<host>:19530）
-"""
+"""远程 Milvus 向量存储封装。"""
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from langchain_milvus import Milvus
 
@@ -17,25 +12,25 @@ from coursemate.rag.embeddings import get_embeddings
 
 
 def _connection_args() -> dict[str, Any]:
-    """根据 MILVUS_URI 判断连接模式：
-
-    - http(s):// 开头 → 连接 Docker 版 Milvus（可带 token 鉴权）；
-    - 其他 → 本地文件模式（Milvus Lite），无需 Docker。
-    这样同一份代码可以在两种部署形态间无缝切换。
-    """
+    """返回 Docker 或托管 Milvus 的连接参数。"""
     settings = get_settings()
-    uri = settings.MILVUS_URI
-    if uri.startswith("http://") or uri.startswith("https://"):
-        args: dict[str, Any] = {"uri": uri}
-        if settings.MILVUS_TOKEN:
-            args["token"] = settings.MILVUS_TOKEN
-        return args
-    # 本地文件：Milvus Lite
-    path = Path(uri)
-    if not path.is_absolute():
-        path = Path.cwd() / path
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return {"uri": str(path)}
+    uri = settings.MILVUS_URI.strip()
+    try:
+        parsed = urlsplit(uri)
+        hostname = parsed.hostname
+    except ValueError as exc:
+        raise ValueError(
+            "MILVUS_URI must point to a remote Milvus http(s) endpoint"
+        ) from exc
+    if parsed.scheme not in {"http", "https"} or not hostname:
+        raise ValueError(
+            "MILVUS_URI must point to a remote Milvus http(s) endpoint"
+        )
+
+    args: dict[str, Any] = {"uri": uri}
+    if settings.MILVUS_TOKEN:
+        args["token"] = settings.MILVUS_TOKEN
+    return args
 
 
 def get_vectorstore(collection_name: str | None = None) -> Milvus:
@@ -64,11 +59,14 @@ def delete_by_document(
 
     document_id 是开启动态字段后的顶层字段，过滤表达式直接写字段名
     （与 course_id 一致），而不是 metadata["document_id"]——后者匹配不到。
-    用包装器的 delete(expr=...)：langchain-milvus 0.4 / pymilvus 3 中
-    vectorstore.col 是 _MilvusClientCollection，没有 delete 方法，直接调会抛
-    AttributeError，导致向量静默残留（文档删了但还能被检索到）。
+    直接调用公开的 MilvusClient：langchain-milvus 0.4 的包装器会捕获
+    MilvusException 并返回 False，无法区分删除失败与幂等重试。底层客户端
+    以是否抛出异常表示删除是否成功，匹配 0 行也属于成功。
+
+    missing_ok 保留用于兼容现有调用；删除本身始终是幂等的。
     """
-    deleted = vectorstore.delete(expr=f"document_id == {document_id}")
-    if not deleted and not missing_ok:
-        raise RuntimeError(f"未删除到向量：document_id == {document_id}")
-    return bool(deleted)
+    vectorstore.client.delete(
+        collection_name=vectorstore.collection_name,
+        filter=f"document_id == {document_id}",
+    )
+    return True

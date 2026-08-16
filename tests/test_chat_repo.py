@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from coursemate.db import chat_repo
+from coursemate.db import chat_repo, repo
 
 
 def test_create_and_list_chat_sessions_ordered_by_updated_at(fresh_db):
+    course = repo.get_or_create_course(fresh_db, "数据库")
     s1 = chat_repo.create_chat_session(fresh_db, course_id=None, title="旧会话")
-    s2 = chat_repo.create_chat_session(fresh_db, course_id=1, title="新会话")
+    s2 = chat_repo.create_chat_session(
+        fresh_db, course_id=course.id, title="新会话"
+    )
     rows = chat_repo.list_chat_sessions(fresh_db)
     assert [r["id"] for r in rows] == [s2.id, s1.id]
     assert rows[0]["title"] == "新会话"
